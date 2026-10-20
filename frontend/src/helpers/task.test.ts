@@ -12,11 +12,12 @@ import {
 	removeTask,
 	moveTaskToBucket,
 	getDefaultBucketId,
+	getTaskBucket,
 	buildDefaultRemindersForQuickAdd,
 	buildQuickAddTask,
 } from './task'
 import {parseTaskText, PREFIXES, PrefixMode, type ParsedTaskText} from '@/modules/quickAddMagic'
-import type {Bucket, Task} from '@/client/generated'
+import type {Bucket, ProjectView, Task} from '@/client/generated'
 import type {IRepeatAfter} from '@/types/IRepeatAfter'
 import {TASK_REPEAT_MODES} from '@/types/IRepeatMode'
 import {useAuthStore} from '@/stores/auth'
@@ -96,6 +97,30 @@ describe('task domain helpers', () => {
 			reactions: {},
 			created_by: {id: 8},
 		})
+	})
+	it('keeps the cached buckets when a response or draft carries none', () => {
+		const buckets = [{id: 3, project_view_id: 2, title: 'Doing'}]
+		const cached: Task = {id: 1, buckets}
+		expect(mergeTask(cached, {id: 1, title: 'new'}).buckets).toEqual(buckets)
+		expect(mergeTask(cached, {id: 1, buckets: []}).buckets).toEqual(buckets)
+		const moved = [{id: 4, project_view_id: 2, title: 'Done'}]
+		expect(mergeTask(cached, {id: 1, buckets: moved}).buckets).toEqual(moved)
+	})
+	it('picks the bucket of the first kanban view by position that holds the task', () => {
+		const doing = {id: 3, project_view_id: 20, title: 'Doing'}
+		const backlog = {id: 8, project_view_id: 30, title: 'Backlog'}
+		const views: ProjectView[] = [
+			{id: 30, position: 3, view_kind: 'kanban'},
+			{id: 10, position: 1, view_kind: 'list'},
+			{id: 20, position: 2, view_kind: 'kanban'},
+		]
+		expect(getTaskBucket({buckets: [backlog, doing]}, views)).toBe(doing)
+		expect(getTaskBucket({buckets: [backlog]}, views)).toBe(backlog)
+		expect(getTaskBucket({buckets: [{id: 9, project_view_id: 10, title: 'List'}]}, views)).toBeUndefined()
+		expect(getTaskBucket({buckets: []}, views)).toBeUndefined()
+		expect(getTaskBucket({}, views)).toBeUndefined()
+		expect(getTaskBucket({buckets: [doing]}, [{id: 10, position: 1, view_kind: 'list'}])).toBeUndefined()
+		expect(getTaskBucket({buckets: [doing]}, undefined)).toBeUndefined()
 	})
 	it('moves only between loaded buckets and preserves counts', () => {
 		const buckets: Bucket[] = [{id: 1, count: 10, tasks: [{id: 4, bucket_id: 1}]}, {id: 2, count: 5, tasks: []}]

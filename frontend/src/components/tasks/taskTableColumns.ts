@@ -19,6 +19,7 @@ export const ACTIVE_COLUMNS_DEFAULT = {
 	createdBy: false,
 	doneAt: false,
 	commentCount: false,
+	bucket: true,
 }
 
 export type TaskTableColumns = Record<keyof typeof ACTIVE_COLUMNS_DEFAULT, boolean>

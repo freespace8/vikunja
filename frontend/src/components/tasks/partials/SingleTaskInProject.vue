@@ -76,6 +76,14 @@
 					:labels="task.labels ?? []"
 				/>
 
+				<span
+					v-if="bucket?.title"
+					v-tooltip="$t('task.detail.bucketSelectLabel', {bucket: bucket.title})"
+					class="tag task-bucket mis-2 mie-1"
+				>
+					{{ bucket.title }}
+				</span>
+
 				<AssigneeList
 					v-if="(task.assignees?.length ?? 0) > 0"
 					:assignees="task.assignees ?? []"
@@ -207,7 +215,7 @@
 import {ref, watch, onMounted, computed} from 'vue'
 import {useI18n} from 'vue-i18n'
 
-import {getHexColor} from '@/helpers/task'
+import {getHexColor, getTaskBucket} from '@/helpers/task'
 import type {Task as ITask} from '@/client/generated'
 
 import PriorityLabel from '@/components/tasks/partials/PriorityLabel.vue'
@@ -280,6 +288,7 @@ const isLoading = useDelayedLoading(() => updateTask.isPending.value || favorite
 
 const project = computed(() => projectList.projects[task.value.project_id ?? 0])
 const projectColor = computed(() => project.value?.hex_color ?? '')
+const bucket = computed(() => getTaskBucket(task.value, project.value?.views))
 
 const showProjectSeparately = computed(() => !props.showProject
 	&& currentProject.value?.id !== task.value.project_id
@@ -472,6 +481,15 @@ defineExpose({
 		color: var(--grey-400);
 		font-size: .9rem;
 		white-space: nowrap;
+	}
+
+	// Outlined and grey, so it is not mistaken for a label.
+	.task-bucket {
+		background: transparent;
+		border: 1px solid var(--grey-300);
+		color: var(--grey-700);
+		vertical-align: middle;
+		transform: translateY(-2px);
 	}
 
 	.tasktext :deep(.color-bubble),

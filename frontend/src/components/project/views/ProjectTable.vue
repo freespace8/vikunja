@@ -77,8 +77,14 @@ const sortBy = useStorage<SortBy>('tableViewSortBy', {...SORT_BY_DEFAULT})
 
 const includeSubprojects = useIncludeSubprojects(() => props.projectId)
 // Parent projects keep their own column choice so showing Project by default there doesn't change other tables.
-const plainColumns = useStorage('tableViewColumns', {...ACTIVE_COLUMNS_DEFAULT})
-const aggregateColumns = useStorage('tableViewColumnsAggregate', {...plainColumns.value, project: true})
+// mergeDefaults: columns added later (bucket) take their default instead of staying hidden for stored settings.
+const plainColumns = useStorage('tableViewColumns', {...ACTIVE_COLUMNS_DEFAULT}, undefined, {mergeDefaults: true})
+const aggregateColumns = useStorage(
+	'tableViewColumnsAggregate',
+	{...plainColumns.value, project: true},
+	undefined,
+	{mergeDefaults: true},
+)
 const activeColumns = computed<TaskTableColumns>({
 	get: () => includeSubprojects.value ? aggregateColumns.value : plainColumns.value,
 	set: columns => {
@@ -94,7 +100,7 @@ const taskList = useTaskList(
 	() => props.projectId,
 	() => props.viewId,
 	sortBy.value,
-	() => ['comment_count', 'is_unread'],
+	() => ['comment_count', 'is_unread', 'buckets'],
 	() => includeSubprojects.value,
 )
 

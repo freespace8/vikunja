@@ -107,7 +107,36 @@ describe('ProjectTable', () => {
 			createdBy: false,
 			doneAt: false,
 			commentCount: false,
+			bucket: true,
 		})
+	})
+
+	it('shows the bucket column for stored columns that predate it and keeps a hidden one hidden', async () => {
+		localStorage.setItem('tableViewColumns', JSON.stringify({index: true, labels: false}))
+		localStorage.setItem('tableViewColumnsAggregate', JSON.stringify({index: true, bucket: false}))
+
+		includeSubprojects.current = ref<boolean | undefined>(false)
+		const plain = await mountTable({})
+		expect(plain.wrapper.findComponent(TaskTable).props('columns')).toMatchObject({
+			index: true,
+			labels: false,
+			bucket: true,
+		})
+
+		includeSubprojects.current = ref<boolean | undefined>(true)
+		const aggregate = await mountTable({})
+		expect(aggregate.wrapper.findComponent(TaskTable).props('columns')).toMatchObject({
+			index: true,
+			bucket: false,
+		})
+	})
+
+	it('asks for the buckets of the tasks', async () => {
+		includeSubprojects.current = ref<boolean | undefined>(false)
+
+		await mountTable({})
+
+		expect(sdk.projectViewTasksList.mock.lastCall?.[0].query.expand).toContain('buckets')
 	})
 
 	it('puts the sort chosen in the table into the url', async () => {

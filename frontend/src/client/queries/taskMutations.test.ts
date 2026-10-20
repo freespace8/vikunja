@@ -308,6 +308,42 @@ describe('task mutations', () => {
 		])
 	})
 
+	it('keeps the buckets of a task in a list when an update response and the edited task carry none', async () => {
+		const client = new QueryClient()
+		const key = taskKeys.list({params: {expand: ['buckets']}})
+		const buckets = [{id: 3, project_view_id: 2, title: 'Doing'}]
+		client.setQueryData(key, {items: [{id: 1, title: 'old', buckets}], total: 1, total_pages: 1})
+		sdk.patchTasksRead.mockResolvedValue({data: {id: 1, title: 'new'}})
+		await client.getMutationCache()
+			.build(client, updateTaskMutationOptions(true))
+			.execute({id: 1, title: 'new', buckets: []})
+		expect(client.getQueryData<PaginatedTask>(key)?.items).toMatchObject([{id: 1, title: 'new', buckets}])
+	})
+
+	it('renames the moved view bucket on a task in a list', async () => {
+		const client = new QueryClient()
+		const key = taskKeys.list({params: {expand: ['buckets']}})
+		client.setQueryData(key, {
+			items: [{id: 1, buckets: [{id: 3, project_view_id: 2, title: 'To-Do'}]}],
+			total: 1,
+			total_pages: 1,
+		})
+		client.setQueryData(kanbanKeys.board(1, 2), {
+			buckets: [
+				{id: 3, project_view_id: 2, title: 'To-Do', count: 1, tasks: [{id: 1}]},
+				{id: 4, project_view_id: 2, title: 'Doing', count: 0, tasks: []},
+			],
+			pages: {3: 1, 4: 1},
+		})
+		sdk.taskBucketUpdate.mockResolvedValue({data: {bucket_id: 4, task: {id: 1}}})
+		await client.getMutationCache()
+			.build(client, moveTaskMutationOptions())
+			.execute({project: 1, view: 2, bucket: 4, task: {id: 1}})
+		expect(client.getQueryData<PaginatedTask>(key)?.items).toMatchObject([
+			{id: 1, buckets: [{id: 4, project_view_id: 2, title: 'Doing'}]},
+		])
+	})
+
 	it('renames the moved view bucket from the cached bucket list when no board is cached', async () => {
 		const client = new QueryClient()
 		const detail = taskKeys.detail(1, ['buckets'])

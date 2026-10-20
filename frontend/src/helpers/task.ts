@@ -5,6 +5,7 @@ import {REMINDER_PERIOD_RELATIVE_TO_TYPES} from '@/types/IReminderPeriodRelative
 import {secondsToPeriod, periodToSeconds} from '@/helpers/time/period'
 import {getDateWithTime} from '@/helpers/time/getDateWithTime'
 import {cleanupItemText, PREFIXES, type ParsedTaskText, type PrefixMode} from '@/modules/quickAddMagic'
+import {PROJECT_VIEW_KINDS} from '@/constants/projectView'
 
 export function createTaskDraft(data: Partial<Task> = {}) {
 	return {
@@ -76,8 +77,23 @@ export function mergeTask(task: Task, updated: Task): Task {
 		attachments: updated.attachments ?? task.attachments,
 		related_tasks: updated.related_tasks ?? task.related_tasks,
 		reactions: updated.reactions ?? task.reactions,
+		// Write responses and drafts carry no expansion; an empty array there must not erase the cached buckets.
+		buckets: updated.buckets?.length ? updated.buckets : task.buckets,
 		created_by: updated.created_by ?? task.created_by,
 	}
+}
+
+// The bucket shown for a task is the one in its project's first kanban view (by position) that holds it.
+export function getTaskBucket(
+	task: Pick<Task, 'buckets'>,
+	views: readonly ProjectView[] | undefined,
+): Bucket | undefined {
+	for (const view of [...(views ?? [])].sort((a, b) => (a.position ?? 0) - (b.position ?? 0))) {
+		if (view.view_kind !== PROJECT_VIEW_KINDS.KANBAN) continue
+		const bucket = task.buckets?.find(item => item.project_view_id === view.id)
+		if (bucket) return bucket
+	}
+	return undefined
 }
 
 export function mapTasksDeep(tasks: readonly Task[], id: number, update: (task: Task) => Task): Task[] {

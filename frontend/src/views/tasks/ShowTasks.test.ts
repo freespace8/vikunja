@@ -207,6 +207,24 @@ describe('Overview view mode', () => {
 		expect(wrapper.findComponent(TaskTableColumnPicker).exists()).toBe(true)
 	})
 
+	it('shows the bucket column for stored columns that predate it', async () => {
+		localStorage.setItem('overviewTableColumns', JSON.stringify({title: true, project: false}))
+
+		const wrapper = await showTable()
+
+		expect(wrapper.findComponent(TaskTable).props('columns')).toMatchObject({
+			title: true,
+			project: false,
+			bucket: true,
+		})
+	})
+
+	it('asks for the buckets of the tasks', async () => {
+		await showTable()
+
+		expect(lastQuery().expand).toContain('buckets')
+	})
+
 	it('keeps the table mounted while a new sort loads', async () => {
 		const wrapper = await showTable()
 		sdk.tasksList.mockReturnValue(new Promise(() => {}))

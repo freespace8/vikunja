@@ -61,6 +61,7 @@ const PICKER_COLUMNS: {
 	{key: 'priority'},
 	{key: 'labels'},
 	{key: 'assignees'},
+	{key: 'bucket'},
 	{key: 'commentCount'},
 	{key: 'dueDate'},
 	{key: 'startDate'},

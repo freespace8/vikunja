@@ -30,6 +30,7 @@ describe('TaskTableColumnPicker', () => {
 			'task.attributes.priority',
 			'task.attributes.labels',
 			'task.attributes.assignees',
+			'task.attributes.bucket',
 			'task.attributes.commentCount',
 			'task.attributes.dueDate',
 			'task.attributes.startDate',

@@ -56,6 +56,9 @@
 					<th v-if="columns.assignees">
 						{{ $t('task.attributes.assignees') }}
 					</th>
+					<th v-if="columns.bucket">
+						{{ $t('task.attributes.bucket') }}
+					</th>
 					<th
 						v-if="columns.dueDate"
 						:aria-sort="ariaSort('due_date')"
@@ -190,6 +193,9 @@
 							:inline="true"
 						/>
 					</td>
+					<td v-if="columns.bucket">
+						{{ getTaskBucket(t, projectList.projects[t.project_id]?.views)?.title }}
+					</td>
 					<DateTableCell
 						v-if="columns.dueDate"
 						:date="t.due_date"
@@ -251,7 +257,7 @@ import type {SortBy} from '@/composables/useTaskList'
 import {useTableSort} from '@/composables/useTableSort'
 import {useProjects} from '@/composables/useProjects'
 import type {TaskResponse} from '@/client/queries/tasks'
-import {getTaskIdentifier} from '@/helpers/task'
+import {getTaskBucket, getTaskIdentifier} from '@/helpers/task'
 
 const props = defineProps<{
 	tasks: TaskResponse[],

@@ -216,7 +216,13 @@ const VIEW_MODES: {
 const viewMode = useStorage<ViewMode>('overviewViewMode', 'list')
 const isTableView = computed(() => viewMode.value === 'table')
 // Own keys: the tasks of all projects are shown here, so the Project column is on by default.
-const tableColumns = useStorage('overviewTableColumns', {...ACTIVE_COLUMNS_DEFAULT, project: true})
+// mergeDefaults: columns added later (bucket) take their default instead of staying hidden for stored settings.
+const tableColumns = useStorage(
+	'overviewTableColumns',
+	{...ACTIVE_COLUMNS_DEFAULT, project: true},
+	undefined,
+	{mergeDefaults: true},
+)
 const tableSortBy = useStorage<SortBy>('overviewTableSortBy', {})
 
 const taskScope = ref<TaskScope | null>(null)
@@ -365,7 +371,7 @@ async function loadPendingTasks(from: Date|string|undefined, to: Date|string|und
 		filter: 'done = false',
 		filter_include_nulls: props.showNulls,
 		q: '',
-		expand: ['comment_count', 'is_unread'],
+		expand: ['comment_count', 'is_unread', 'buckets'],
 	}
 
 	if (!showAll.value) {

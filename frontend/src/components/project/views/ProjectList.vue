@@ -161,8 +161,8 @@ const {
 	() => props.viewId,
 	{position: 'asc'},
 	() => projectId.value === -1
-		? ['comment_count', 'is_unread']
-		: ['subtasks', 'comment_count', 'is_unread'],
+		? ['comment_count', 'is_unread', 'buckets']
+		: ['subtasks', 'comment_count', 'is_unread', 'buckets'],
 	() => includeSubprojects.value,
 )
 const showLoading = useDelayedLoading(loading)
