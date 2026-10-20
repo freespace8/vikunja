@@ -18,6 +18,7 @@ package webtests
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -182,7 +183,7 @@ func TestMCP_AttachmentDownload_RoundTrip(t *testing.T) {
 	assert.Equal(t, "download.txt", link.File.Name)
 	assert.NotEmpty(t, link.File.Mime)
 	assert.Equal(t, int64(len(content)), link.File.SizeBytes)
-	assert.Equal(t, "curl -fsS -o 'download.txt' '"+link.DownloadURL+"'", link.CurlExample)
+	assert.Equal(t, fmt.Sprintf("curl -fsS -o 'vikunja-%d-download.txt' '%s'", attachment, link.DownloadURL), link.CurlExample)
 
 	rec := redeemDownload(t, e, link.DownloadURL, "")
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -227,7 +228,7 @@ func TestMCP_AttachmentDownload_CurlExampleQuotesTheFilename(t *testing.T) {
 
 	link := mintDownloadViaMCP(t, c, 1, attachment)
 	assert.Equal(t, "it's $(touch x) #1.txt", link.File.Name)
-	assert.Equal(t, `curl -fsS -o 'it'\''s $(touch x) _1.txt' '`+link.DownloadURL+"'", link.CurlExample)
+	assert.Equal(t, fmt.Sprintf(`curl -fsS -o 'vikunja-%d-it'\''s $(touch x) _1.txt' '%s'`, attachment, link.DownloadURL), link.CurlExample)
 }
 
 func TestMCP_AttachmentDownload_SessionCannotMint(t *testing.T) {

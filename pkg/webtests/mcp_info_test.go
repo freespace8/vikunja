@@ -78,7 +78,10 @@ func TestMCPInfo(t *testing.T) {
 				assert.ElementsMatch(t, crud, typed[group], group)
 			}
 			assert.ElementsMatch(t, []string{"create", "delete", "read_all"}, typed["tasks_assignees"])
-			assert.Equal(t, []string{"create", "read_one"}, typed["tasks_attachments"])
+			assert.Equal(t, []string{
+				"create",
+				"read_one",
+			}, typed["tasks_attachments"])
 			assert.Contains(t, info.Routes["tasks_attachments"], "create")
 			assert.Contains(t, info.Routes["tasks_attachments"], "read_one")
 			assert.Contains(t, typed["other"], "users")

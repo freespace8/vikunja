@@ -17,6 +17,7 @@
 package apiv2
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -79,11 +80,24 @@ func TestSafeDownloadName(t *testing.T) {
 			in:   "  \t ",
 			want: "attachment",
 		},
+		"format characters": {
+			in:   "\u202egpj.exe",
+			want: "gpj.exe",
+		},
+		"long name": {
+			in:   strings.Repeat("ä", 150) + ".txt",
+			want: strings.Repeat("ä", 100),
+		},
 	} {
 		t.Run(name, func(t *testing.T) {
 			assert.Equal(t, tc.want, safeDownloadName(tc.in))
 		})
 	}
+}
+
+func TestLocalDownloadName(t *testing.T) {
+	assert.Equal(t, "vikunja-4-.bashrc", localDownloadName(4, ".bashrc"))
+	assert.Equal(t, "vikunja-4-_-rf", localDownloadName(4, "-rf"))
 }
 
 func TestShellQuote(t *testing.T) {

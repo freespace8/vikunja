@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"code.vikunja.io/api/pkg/config"
 	"code.vikunja.io/api/pkg/models"
@@ -45,7 +46,7 @@ type taskAttachmentDownloadLink struct {
 	DownloadURL string                         `json:"download_url" readOnly:"true" doc:"Single-use URL to fetch the file from. The URL itself is the credential: any Authorization header is ignored."`
 	ExpiresAt   time.Time                      `json:"expires_at" readOnly:"true" doc:"When the link expires, 10 minutes after it was created."`
 	File        taskAttachmentDownloadLinkFile `json:"file" readOnly:"true" doc:"What the link downloads."`
-	CurlExample string                         `json:"curl_example" readOnly:"true" doc:"A ready-to-run curl command that saves the file to the current directory under a safe name."`
+	CurlExample string                         `json:"curl_example" readOnly:"true" doc:"A ready-to-run curl command that saves the file to the current directory as vikunja-<attachment id>-<name>, so it cannot overwrite an unrelated local file."`
 }
 
 type taskAttachmentDownloadLinkBody struct {
@@ -62,7 +63,7 @@ func RegisterTaskAttachmentDownloadLinkRoutes(api huma.API) {
 	Register(api, huma.Operation{
 		OperationID: "task-attachments-download-link",
 		Summary:     "Create a one-time attachment download link",
-		Description: "Returns a single-use download_url for one attachment of this task, valid for 10 minutes, together with the file's name, mime type and size. This call does not return the file: fetch download_url yourself with a plain HTTP GET and save it to a local file, for example `curl -fsS -o 'image.png' '<download_url>'` (curl_example in the response is ready to run), then open that local file. download_url needs no Authorization header; one is ignored. The link expires after 10 minutes and works exactly once: it is used up by the first request that reaches it. Request a new link if the link is gone. Requires an API token and read access to the task. The attachment must belong to the task in the path.",
+		Description: "Returns a single-use download_url for one attachment of this task, valid for 10 minutes, together with the file's name, mime type and size. This call does not return the file: fetch download_url yourself with a plain HTTP GET and save it to a local file, for example `curl -fsS -o 'vikunja-12-image.png' '<download_url>'` (curl_example in the response is ready to run), then open that local file. download_url needs no Authorization header; one is ignored. The link expires after 10 minutes and works exactly once: it is used up by the first request that reaches it. Request a new link if the link is gone. Requires an API token and read access to the task. The attachment must belong to the task in the path.",
 		Method:      http.MethodPost,
 		Path:        "/tasks/{task}/attachments/{attachment}/download-link",
 		Tags:        []string{"task"},
@@ -120,7 +121,7 @@ func taskAttachmentsDownloadLink(ctx context.Context, in *struct {
 			Mime:      attachment.File.Mime,
 			SizeBytes: attachment.File.Size,
 		},
-		CurlExample: fmt.Sprintf("curl -fsS -o %s %s", shellQuote(safeDownloadName(attachment.File.Name)), shellQuote(downloadURL)),
+		CurlExample: fmt.Sprintf("curl -fsS -o %s %s", shellQuote(localDownloadName(attachment.ID, attachment.File.Name)), shellQuote(downloadURL)),
 	}}, nil
 }
 
@@ -152,23 +153,32 @@ func mcpDownloadsRedeem(_ context.Context, in *struct {
 	return streamAttachmentFile(file), nil
 }
 
+// maxDownloadNameBytes keeps the local name, prefix included, under the usual 255-byte limit.
+const maxDownloadNameBytes = 200
+
+// localDownloadName prefixes the attachment id so a collaborator-chosen name like ".bashrc" or
+// "Makefile" cannot overwrite an unrelated file in the agent's working directory.
+func localDownloadName(attachmentID int64, name string) string {
+	return fmt.Sprintf("vikunja-%d-%s", attachmentID, safeDownloadName(name))
+}
+
 // Attachment names are user-controlled and end up in a shell command: keep only the last path
-// element, drop control characters, and avoid names curl would read as stdout ("-") or as a
-// output-name template ("#1").
+// element, drop control and format characters (such as bidi overrides), cap the length, and
+// avoid names curl would read as stdout ("-") or as an output-name template ("#1").
 func safeDownloadName(name string) string {
 	if i := strings.LastIndexAny(name, `/\`); i >= 0 {
 		name = name[i+1:]
 	}
 	name = strings.Map(func(r rune) rune {
 		switch {
-		case unicode.IsControl(r):
+		case unicode.IsControl(r), unicode.Is(unicode.Cf, r):
 			return -1
 		case r == '#':
 			return '_'
 		}
 		return r
 	}, name)
-	name = strings.TrimSpace(name)
+	name = strings.TrimSpace(truncateUTF8(name, maxDownloadNameBytes))
 	if name == "" || name == "." || name == ".." {
 		return "attachment"
 	}
@@ -180,4 +190,15 @@ func safeDownloadName(name string) string {
 
 func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// truncateUTF8 cuts s to at most n bytes without splitting a character.
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
