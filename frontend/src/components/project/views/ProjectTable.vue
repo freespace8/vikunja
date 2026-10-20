@@ -410,7 +410,7 @@ const sortBy = useStorage<SortBy>('tableViewSortBy', {...SORT_BY_DEFAULT})
 const includeSubprojects = useIncludeSubprojects(() => props.projectId)
 // Parent projects keep their own column choice so showing Project by default there doesn't change other tables.
 const plainColumns = useStorage('tableViewColumns', {...ACTIVE_COLUMNS_DEFAULT})
-const aggregateColumns = useStorage('tableViewColumnsAggregate', {...ACTIVE_COLUMNS_DEFAULT, project: true})
+const aggregateColumns = useStorage('tableViewColumnsAggregate', {...plainColumns.value, project: true})
 const activeColumns = computed(() => includeSubprojects.value ? aggregateColumns.value : plainColumns.value)
 
 const taskList = useTaskList(
@@ -430,8 +430,9 @@ const {
 const loading = useDelayedLoading(taskList.loading)
 const tasks: Ref<TaskResponse[]> = taskList.tasks
 
+// Not the switching computed: gaining sub-projects must not rewrite the sort and page of the current url.
 watch(
-	() => activeColumns.value,
+	[plainColumns, aggregateColumns],
 	() => setActiveColumnsSortParam(),
 	{deep: true},
 )
