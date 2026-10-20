@@ -2271,6 +2271,29 @@ export type TaskAttachment = {
     readonly task_id?: number;
 };
 
+export type TaskAttachmentUploadLink = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * A ready-to-run curl command; replace /path/to/file.png with the local file.
+     */
+    readonly curl_example?: string;
+    /**
+     * When the link expires, 10 minutes after it was created.
+     */
+    readonly expires_at?: string;
+    /**
+     * Largest file the server accepts per file, in bytes.
+     */
+    readonly max_file_size_bytes?: number;
+    /**
+     * Single-use URL to upload the file(s) to. The URL itself is the credential: any Authorization header is ignored.
+     */
+    readonly upload_url?: string;
+};
+
 export type TaskBucket = {
     /**
      * A URL to the JSON Schema for this object.
@@ -6269,6 +6292,38 @@ export type McpInfoResponses = {
 
 export type McpInfoResponse = McpInfoResponses[keyof McpInfoResponses];
 
+export type McpUploadsRedeemData = {
+    body: {
+        files: Array<Blob | File>;
+    };
+    path: {
+        /**
+         * The one-time ticket from an upload link.
+         */
+        ticket: string;
+    };
+    query?: never;
+    url: '/mcp/uploads/{ticket}';
+};
+
+export type McpUploadsRedeemErrors = {
+    /**
+     * Error
+     */
+    default: VikunjaErrorModel;
+};
+
+export type McpUploadsRedeemError = McpUploadsRedeemErrors[keyof McpUploadsRedeemErrors];
+
+export type McpUploadsRedeemResponses = {
+    /**
+     * Created
+     */
+    201: AttachmentUploadResult;
+};
+
+export type McpUploadsRedeemResponse = McpUploadsRedeemResponses[keyof McpUploadsRedeemResponses];
+
 export type MigrationCsvDetectData = {
     body: {
         /**
@@ -9283,6 +9338,36 @@ export type TaskAttachmentsUploadResponses = {
 };
 
 export type TaskAttachmentsUploadResponse = TaskAttachmentsUploadResponses[keyof TaskAttachmentsUploadResponses];
+
+export type TaskAttachmentsUploadLinkData = {
+    body?: never;
+    path: {
+        /**
+         * The id of the task to create an upload link for.
+         */
+        task: number;
+    };
+    query?: never;
+    url: '/tasks/{task}/attachments/upload-link';
+};
+
+export type TaskAttachmentsUploadLinkErrors = {
+    /**
+     * Error
+     */
+    default: VikunjaErrorModel;
+};
+
+export type TaskAttachmentsUploadLinkError = TaskAttachmentsUploadLinkErrors[keyof TaskAttachmentsUploadLinkErrors];
+
+export type TaskAttachmentsUploadLinkResponses = {
+    /**
+     * Created
+     */
+    201: TaskAttachmentUploadLink;
+};
+
+export type TaskAttachmentsUploadLinkResponse = TaskAttachmentsUploadLinkResponses[keyof TaskAttachmentsUploadLinkResponses];
 
 export type TaskAttachmentsDeleteData = {
     body?: never;
