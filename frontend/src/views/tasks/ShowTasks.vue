@@ -71,6 +71,28 @@
 				{{ $t('task.show.overdue') }}
 			</FancyCheckbox>
 		</p>
+		<div class="show-tasks-view-options mbe-2">
+			<div
+				class="view-mode-switch"
+				role="group"
+				:aria-label="$t('project.views')"
+			>
+				<XButton
+					v-for="mode in VIEW_MODES"
+					:key="mode.value"
+					:variant="viewMode === mode.value ? 'primary' : 'secondary'"
+					:shadow="false"
+					:aria-pressed="viewMode === mode.value"
+					@click="viewMode = mode.value"
+				>
+					{{ $t(mode.label) }}
+				</XButton>
+			</div>
+			<TaskTableColumnPicker
+				v-if="isTableView"
+				v-model="tableColumns"
+			/>
+		</div>
 		<template v-if="!loading && (!tasks || tasks.length === 0) && showNothingToDo">
 			<h3 class="has-text-centered mbs-6">
 				{{ $t('task.show.noTasks') }}
@@ -81,11 +103,20 @@
 		<Card
 			v-if="hasTasks"
 			:padding="false"
-			class="has-overflow"
+			:class="{'has-overflow': !isTableView}"
 			:has-content="false"
 			:loading="loading"
 		>
-			<ul class="p-2 tasks">
+			<TaskTable
+				v-if="isTableView"
+				v-model:sort-by="tableSortBy"
+				:tasks="tasks"
+				:columns="tableColumns"
+			/>
+			<ul
+				v-else
+				class="p-2 tasks"
+			>
 				<li
 					v-for="task in tasks"
 					:key="task.id"
@@ -110,6 +141,7 @@
 <script setup lang="ts">
 import {computed, ref, watch, watchEffect} from 'vue'
 import {useRoute, useRouter} from 'vue-router'
+import {useStorage} from '@vueuse/core'
 import {useI18n} from 'vue-i18n'
 
 import {formatDate} from '@/helpers/time/formatDate'
@@ -120,6 +152,9 @@ import Icon from '@/components/misc/Icon'
 import Message from '@/components/misc/Message.vue'
 import FancyCheckbox from '@/components/input/FancyCheckbox.vue'
 import SingleTaskInProject from '@/components/tasks/partials/SingleTaskInProject.vue'
+import TaskTable from '@/components/tasks/TaskTable.vue'
+import TaskTableColumnPicker from '@/components/tasks/TaskTableColumnPicker.vue'
+import {ACTIVE_COLUMNS_DEFAULT, sortByActiveColumns} from '@/components/tasks/taskTableColumns'
 import DatepickerWithRange from '@/components/date/DatepickerWithRange.vue'
 import XLabel from '@/components/tasks/partials/Label.vue'
 import {DATE_RANGES} from '@/components/date/dateRanges'
@@ -128,6 +163,7 @@ import {useAuthStore} from '@/stores/auth'
 import {useProjects} from '@/composables/useProjects'
 import {useLabels} from '@/composables/useLabels'
 import type {TaskFilterParams} from '@/client/queries/tasks'
+import type {SortBy} from '@/composables/useTaskList'
 import {useTasks} from '@/composables/useTasks'
 import {useDelayedLoading} from '@/composables/useDelayedLoading'
 import type {TaskScope} from '@/client/queries/tasks'
@@ -159,6 +195,19 @@ const {getLabelById} = useLabels()
 const route = useRoute()
 const router = useRouter()
 const {t} = useI18n({useScope: 'global'})
+
+type ViewMode = 'list' | 'table'
+
+const VIEW_MODES: {value: ViewMode, label: string}[] = [
+	{value: 'list', label: 'project.list.title'},
+	{value: 'table', label: 'project.table.title'},
+]
+
+const viewMode = useStorage<ViewMode>('overviewViewMode', 'list')
+const isTableView = computed(() => viewMode.value === 'table')
+// Own keys: the tasks of all projects are shown here, so the Project column is on by default.
+const tableColumns = useStorage('overviewTableColumns', {...ACTIVE_COLUMNS_DEFAULT, project: true})
+const tableSortBy = useStorage<SortBy>('overviewTableSortBy', {})
 
 const taskScope = ref<TaskScope | null>(null)
 const taskQuery = useTasks(
@@ -253,6 +302,19 @@ function clearLabelFilter() {
 	emit('clearLabelFilter')
 }
 
+const sortParams = computed<Pick<TaskFilterParams, 'sort_by' | 'order_by'>>(() => {
+	const sortBy = isTableView.value ? sortByActiveColumns(tableSortBy.value, tableColumns.value) : {}
+	const fields = (Object.keys(sortBy) as (keyof SortBy)[]).filter(field => sortBy[field] !== 'none')
+	if (fields.length === 0) {
+		return {sort_by: ['due_date', 'id'], order_by: ['asc', 'desc']}
+	}
+
+	return {
+		sort_by: [...fields, 'id'],
+		order_by: [...fields.map(field => sortBy[field] as string), 'desc'],
+	}
+})
+
 async function loadPendingTasks(from: Date|string|undefined, to: Date|string|undefined, filterId: number | null | undefined) {
 	// FIXME: HACK! This should never happen.
 	// Since this route is authentication only, users would get an error message if they access the page unauthenticated.
@@ -263,8 +325,7 @@ async function loadPendingTasks(from: Date|string|undefined, to: Date|string|und
 	}
 
 	const params: TaskFilterParams = {
-		sort_by: ['due_date', 'id'],
-		order_by: ['asc', 'desc'],
+		...sortParams.value,
 		filter: 'done = false',
 		filter_include_nulls: props.showNulls,
 		q: '',
@@ -311,6 +372,7 @@ watch(
 		() => props.showOverdue,
 		() => props.showNulls,
 		() => props.labelIds,
+		sortParams,
 	],
 	([from, to, filterId]) => loadPendingTasks(from, to, filterId),
 	{immediate: true},
@@ -327,6 +389,17 @@ watchEffect(() => setTitle(pageTitle.value))
 .show-tasks-options {
 	display: flex;
 	flex-direction: column;
+}
+
+.show-tasks-view-options {
+	display: flex;
+	align-items: center;
+	gap: .5rem;
+}
+
+.view-mode-switch {
+	display: inline-flex;
+	gap: .5rem;
 }
 
 .llama-cool {
