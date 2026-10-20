@@ -28,37 +28,49 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestUploadTicket(t *testing.T) {
+func TestLinkTickets(t *testing.T) {
 	keyvalue.InitStorage()
-	want := uploadTicket{
-		UserID:  1,
-		TokenID: 12,
-		TaskID:  3,
+	for _, purpose := range []linkPurpose{
+		uploadLinks,
+		downloadLinks,
+	} {
+		t.Run(purpose.name, func(t *testing.T) {
+			testLinkTickets(t, purpose)
+		})
+	}
+}
+
+func testLinkTickets(t *testing.T, purpose linkPurpose) {
+	want := linkTicket{
+		UserID:       1,
+		TokenID:      12,
+		TaskID:       3,
+		AttachmentID: 4,
 	}
 
 	t.Run("single use", func(t *testing.T) {
-		ticket, expiresAt, err := mintUploadTicket(want)
+		ticket, expiresAt, err := purpose.mint(want)
 		require.NoError(t, err)
 		assert.GreaterOrEqual(t, len(ticket), 43, "32 random bytes, base64url encoded")
 		assert.NotContains(t, ticket, "=")
 		assert.WithinDuration(t, time.Now().Add(10*time.Minute), expiresAt, time.Minute)
 
-		exists, err := peekUploadTicket(ticket)
+		exists, err := purpose.peek(ticket)
 		require.NoError(t, err)
 		assert.True(t, exists, "peeking must not consume the ticket")
 
-		got, exists, err := consumeUploadTicket(ticket)
+		got, exists, err := purpose.consume(ticket)
 		require.NoError(t, err)
 		require.True(t, exists)
 		assert.Equal(t, want, got)
 
-		_, exists, err = consumeUploadTicket(ticket)
+		_, exists, err = purpose.consume(ticket)
 		require.NoError(t, err)
 		assert.False(t, exists)
 	})
 
 	t.Run("concurrent redemption has a single winner", func(t *testing.T) {
-		ticket, _, err := mintUploadTicket(want)
+		ticket, _, err := purpose.mint(want)
 		require.NoError(t, err)
 
 		const redeemers = 20
@@ -68,7 +80,7 @@ func TestUploadTicket(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				_, exists, err := consumeUploadTicket(ticket)
+				_, exists, err := purpose.consume(ticket)
 				assert.NoError(t, err)
 				if exists {
 					wins.Add(1)
@@ -80,44 +92,86 @@ func TestUploadTicket(t *testing.T) {
 	})
 
 	t.Run("the raw ticket is not a store key", func(t *testing.T) {
-		ticket, _, err := mintUploadTicket(want)
+		ticket, _, err := purpose.mint(want)
 		require.NoError(t, err)
-		for _, prefix := range []string{uploadTicketKeyPrefix, uploadClaimKeyPrefix} {
+		for _, prefix := range []string{purpose.ticketKeyPrefix, purpose.claimKeyPrefix} {
 			keys, err := keyvalue.ListKeys(prefix)
 			require.NoError(t, err)
 			for _, key := range keys {
 				assert.NotContains(t, key, ticket, key)
 			}
 		}
-		keys, err := keyvalue.ListKeys(uploadTicketKeyPrefix)
+		keys, err := keyvalue.ListKeys(purpose.ticketKeyPrefix)
 		require.NoError(t, err)
 		require.NotEmpty(t, keys)
 	})
 
 	t.Run("expires", func(t *testing.T) {
-		previous := uploadTicketTTL
-		uploadTicketTTL = 50 * time.Millisecond
-		t.Cleanup(func() { uploadTicketTTL = previous })
+		previous := linkTicketTTL
+		linkTicketTTL = 50 * time.Millisecond
+		t.Cleanup(func() { linkTicketTTL = previous })
 
-		ticket, _, err := mintUploadTicket(want)
+		ticket, _, err := purpose.mint(want)
 		require.NoError(t, err)
 		time.Sleep(150 * time.Millisecond)
-		_, exists, err := consumeUploadTicket(ticket)
+		_, exists, err := purpose.consume(ticket)
 		require.NoError(t, err)
 		assert.False(t, exists)
 	})
 
 	t.Run("unknown", func(t *testing.T) {
-		_, exists, err := consumeUploadTicket("nope")
+		_, exists, err := purpose.consume("nope")
 		require.NoError(t, err)
 		assert.False(t, exists)
 	})
 
 	t.Run("tickets are unique", func(t *testing.T) {
-		a, _, err := mintUploadTicket(want)
+		a, _, err := purpose.mint(want)
 		require.NoError(t, err)
-		b, _, err := mintUploadTicket(want)
+		b, _, err := purpose.mint(want)
 		require.NoError(t, err)
 		assert.NotEqual(t, a, b)
 	})
+}
+
+func TestLinkTicketsAreNotInterchangeable(t *testing.T) {
+	keyvalue.InitStorage()
+	ticket := linkTicket{
+		UserID:  1,
+		TokenID: 12,
+		TaskID:  3,
+	}
+
+	for _, tc := range []struct {
+		name         string
+		from, redeem linkPurpose
+	}{
+		{
+			name:   "upload ticket at the download store",
+			from:   uploadLinks,
+			redeem: downloadLinks,
+		},
+		{
+			name:   "download ticket at the upload store",
+			from:   downloadLinks,
+			redeem: uploadLinks,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			minted, _, err := tc.from.mint(ticket)
+			require.NoError(t, err)
+
+			exists, err := tc.redeem.peek(minted)
+			require.NoError(t, err)
+			assert.False(t, exists)
+			_, exists, err = tc.redeem.consume(minted)
+			require.NoError(t, err)
+			assert.False(t, exists)
+
+			// The failed attempt at the other store must not have used it up.
+			_, exists, err = tc.from.consume(minted)
+			require.NoError(t, err)
+			assert.True(t, exists)
+		})
+	}
 }
