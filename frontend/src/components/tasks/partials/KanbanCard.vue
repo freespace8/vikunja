@@ -23,7 +23,7 @@
 			class="tw:w-full"
 		>
 		<div class="p-2">
-			<div class="tw:flex tw:justify-between">
+			<div class="tw:flex tw:justify-between tw:gap-2">
 				<span class="task-id">
 					<Done
 						class="kanban-card__done"
@@ -38,17 +38,26 @@
 						{{ task.position }}
 					</span>
 				</span>
-				<span
-					v-if="new Date(task.due_date ?? 0).getTime() > 0"
-					v-tooltip="formatDateLong(task.due_date)"
-					class="due-date"
-				>
-					<span class="icon">
-						<Icon :icon="['far', 'calendar-alt']" />
+				<span class="kanban-card__top-end">
+					<span
+						v-if="projectTitle"
+						v-tooltip="projectTitle"
+						class="kanban-card__project"
+					>
+						{{ projectTitle }}
 					</span>
-					<time :datetime="formatISO(task.due_date)">
-						{{ formatDisplayDate(task.due_date) }}
-					</time>
+					<span
+						v-if="new Date(task.due_date ?? 0).getTime() > 0"
+						v-tooltip="formatDateLong(task.due_date)"
+						class="due-date"
+					>
+						<span class="icon">
+							<Icon :icon="['far', 'calendar-alt']" />
+						</span>
+						<time :datetime="formatISO(task.due_date)">
+							{{ formatDisplayDate(task.due_date) }}
+						</time>
+					</span>
 				</span>
 			</div>
 			
@@ -65,13 +74,6 @@
 				</RouterLink>
 			</h3>
 			
-			<span
-				v-if="projectTitle"
-				class="project-title"
-			>
-				{{ projectTitle }}
-			</span>
-
 			<ProgressBar
 				v-if="task.percent_done > 0"
 				class="task-progress"
@@ -154,7 +156,6 @@ import {TASK_REPEAT_MODES} from '@/types/IRepeatMode'
 
 const props = defineProps<{
 	task: TaskResponse,
-	projectId: number,
 }>()
 
 const emit = defineEmits<{
@@ -171,14 +172,7 @@ const color = computed(() => getHexColor(props.task.hex_color))
 
 const projectList = useProjects()
 
-const projectTitle = computed(() => {
-	if (props.projectId === props.task.project_id) {
-		return
-	}
-	
-	const project = projectList.projects[props.task.project_id]
-	return project?.title
-})
+const projectTitle = computed(() => projectList.projects[props.task.project_id]?.title)
 
 const showTaskPosition = computed(() => window.DEBUG_TASK_POSITION)
 
@@ -339,6 +333,7 @@ $task-background: var(--white);
 
 	.due-date {
 		float: inline-end;
+		flex-shrink: 0;
 		display: flex;
 		align-items: center;
 		padding: 0 .25rem;
@@ -404,11 +399,28 @@ $task-background: var(--white);
 		padding: 0 .5rem;
 	}
 
-	.task-id, .project-title {
+	.task-id, .kanban-card__project {
 		color: var(--grey-500);
 		font-size: .8rem;
 		margin-block-end: .25rem;
+	}
+
+	.task-id {
 		display: flex;
+		flex-shrink: 0;
+	}
+
+	.kanban-card__top-end {
+		display: flex;
+		align-items: flex-start;
+		gap: .5rem;
+		min-inline-size: 0;
+	}
+
+	.kanban-card__project {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
 	}
 
 	&.is-moving {
@@ -429,7 +441,7 @@ $task-background: var(--white);
 		}
 
 		// beat component-level color: var(--grey-500) so secondary text tracks the guaranteed main text color
-		.task-id, .project-title {
+		.task-id, .kanban-card__project {
 			color: inherit;
 		}
 
@@ -455,7 +467,7 @@ $task-background: var(--white);
 		}
 
 		// beat component-level color: var(--grey-500) so secondary text tracks the guaranteed main text color
-		.task-id, .project-title {
+		.task-id, .kanban-card__project {
 			color: inherit;
 		}
 

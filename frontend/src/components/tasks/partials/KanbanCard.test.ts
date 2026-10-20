@@ -23,6 +23,10 @@ const attachments = vi.hoisted(() => ({
 
 vi.mock('@/helpers/attachments', () => attachments)
 
+const projectList = vi.hoisted(() => ({projects: {} as Record<number, {title: string}>}))
+
+vi.mock('@/composables/useProjects', () => ({useProjects: () => projectList}))
+
 import KanbanCard from './KanbanCard.vue'
 
 class FakeIntersectionObserver {
@@ -80,7 +84,7 @@ function mountCard(task: TaskResponse) {
 		routes: [{path: '/tasks/:id', name: 'task.detail', component: {render: () => null}}],
 	})
 	return shallowMount(KanbanCard, {
-		props: {task, projectId: 1},
+		props: {task},
 		global: {
 			plugins: [
 				createPinia(),
@@ -107,6 +111,25 @@ describe('KanbanCard', () => {
 	afterEach(() => {
 		vi.unstubAllGlobals()
 		vi.useRealTimers()
+	})
+
+	it('shows the task\'s project in the top row next to the identifier', () => {
+		projectList.projects = {1: {title: 'umia_admin_server'}}
+		const wrapper = mountCard(normalizeTask({id: 9, project_id: 1, title: 'Weekly check-in', due_date: '2030-01-01T00:00:00Z'}))
+
+		const topRow = wrapper.get('.task-id').element.parentElement!
+		const project = wrapper.get('.kanban-card__project')
+		expect(project.text()).toBe('umia_admin_server')
+		expect(topRow.contains(project.element)).toBe(true)
+		expect(topRow.contains(wrapper.get('.due-date').element)).toBe(true)
+		expect(wrapper.findAll('.kanban-card__project')).toHaveLength(1)
+	})
+
+	it('shows no project name while the project is unknown', () => {
+		projectList.projects = {}
+		const wrapper = mountCard(recurringTask)
+
+		expect(wrapper.find('.kanban-card__project').exists()).toBe(false)
 	})
 
 	// The ctrl click itself is covered by e2e project-view-kanban.spec.ts, which reads the task back from the API.
