@@ -96,7 +96,10 @@ function listRequests() {
 
 async function mountTaskList(
 	query: Record<string, string>,
-	{includeSubprojects = false, sortByDefault}: {includeSubprojects?: boolean | Ref<boolean | undefined>, sortByDefault?: SortBy} = {},
+	{includeSubprojects = false, sortByDefault}: {
+		includeSubprojects?: boolean | Ref<boolean | undefined>,
+		sortByDefault?: SortBy,
+	} = {},
 ): Promise<Router> {
 	const router = createRouter({
 		history: createMemoryHistory(),

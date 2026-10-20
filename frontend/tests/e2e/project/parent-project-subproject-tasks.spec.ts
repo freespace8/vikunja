@@ -16,7 +16,7 @@ async function createProjectTree() {
 		parent_project_id: 101,
 	}, false))[0]
 
-	const [parentList, , parentTable] = await createDefaultViews(parent.id, 100)
+	const [parentList, , parentTable] = await createDefaultViews(parent.id, 100, 'done = false')
 	await createDefaultViews(child.id, 104)
 	const [, , grandchildTable] = await createDefaultViews(grandchild.id, 108)
 
@@ -37,10 +37,13 @@ test.describe('Parent project with sub-projects', () => {
 		await expect(rows).toHaveCount(3)
 		await expect(rows.filter({hasText: /Parent task/}).locator('.task-project')).toHaveText('Parent Project')
 		await expect(rows.filter({hasText: /Child task/}).locator('.task-project')).toHaveText('Child Project')
-		await expect(rows.filter({hasText: /Grandchild task/}).locator('.task-project')).toHaveText('Grandchild Project')
+		await expect(rows.filter({hasText: /Grandchild task/}).locator('.task-project'))
+			.toHaveText('Grandchild Project')
 	})
 
-	test('A sub-project task stays in the parent list after it is marked as done', async ({authenticatedPage: page}) => {
+	test('A sub-project task stays in the parent list, struck through, after it is marked as done', async ({
+		authenticatedPage: page,
+	}) => {
 		const {parent, parentList} = await createProjectTree()
 		await page.goto(`/projects/${parent.id}/${parentList.id}`)
 		const rows = page.locator('.list-view .single-task')
@@ -52,11 +55,16 @@ test.describe('Parent project with sub-projects', () => {
 		)
 		await childRow.locator('.fancy-checkbox').click()
 		await update
-		// The list is refetched after the update, so wait for that before asserting membership.
 		await page.waitForLoadState('networkidle')
 
+		// Like in a normal project, the done task stays until the list is loaded again.
 		await expect(rows).toHaveCount(3)
-		await expect(childRow).toBeVisible()
+		await expect(childRow.locator('.tasktext.done')).toBeVisible()
+
+		// The view filter `done = false` applies to the sub-project tasks as well.
+		await page.reload()
+		await expect(rows).toHaveCount(2)
+		await expect(childRow).toHaveCount(0)
 	})
 
 	test('List view of a sub-project only shows its own subtree', async ({authenticatedPage: page}) => {
@@ -69,7 +77,9 @@ test.describe('Parent project with sub-projects', () => {
 		await expect(rows.filter({hasText: /Parent task/})).toHaveCount(0)
 	})
 
-	test('Table view shows a Project column by default that can be switched off', async ({authenticatedPage: page}) => {
+	test('Table view shows a Project column by default that can be switched off', async ({
+		authenticatedPage: page,
+	}) => {
 		const {parent, parentTable} = await createProjectTree()
 
 		await page.goto(`/projects/${parent.id}/${parentTable.id}`)
@@ -90,7 +100,9 @@ test.describe('Parent project with sub-projects', () => {
 		await expect(projectHeader).toHaveCount(0)
 	})
 
-	test('The Project column choice of a parent project does not change tables of other projects', async ({authenticatedPage: page}) => {
+	test('The Project column choice of a parent project does not change other tables', async ({
+		authenticatedPage: page,
+	}) => {
 		const {grandchild, grandchildTable, parent, parentTable} = await createProjectTree()
 
 		await page.goto(`/projects/${parent.id}/${parentTable.id}`)

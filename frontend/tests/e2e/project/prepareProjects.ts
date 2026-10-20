@@ -2,11 +2,12 @@ import {ProjectFactory} from '../../factories/project'
 import {TaskFactory} from '../../factories/task'
 import {ProjectViewFactory} from '../../factories/project_view'
 
-export async function createDefaultViews(projectId: number, startViewId = 1) {
+export async function createDefaultViews(projectId: number, startViewId = 1, listFilter?: string) {
 	const list = await ProjectViewFactory.create(1, {
 		id: startViewId,
 		project_id: projectId,
 		view_kind: 0,
+		...(listFilter ? {filter: JSON.stringify({filter: listFilter})} : {}),
 	}, false)
 	const gantt = await ProjectViewFactory.create(1, {
 		id: startViewId + 1,

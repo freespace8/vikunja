@@ -170,6 +170,22 @@ func TestTaskCollection_IncludeSubprojects(t *testing.T) {
 		assert.ElementsMatch(t, tree.taskIDs(tree.parent.ID, tree.grandchild.ID), ids)
 	})
 
+	t.Run("the view's own filter applies to the sub-project tasks too", func(t *testing.T) {
+		s, tree := setup(t)
+		_, err := s.ID(tree.tasks[tree.child.ID].ID).Cols("done").Update(&Task{Done: true})
+		require.NoError(t, err)
+		_, err = s.ID(tree.parentListViewID).Cols("filter").Update(&ProjectView{
+			Filter: &TaskCollection{
+				Filter: "done = false",
+			},
+		})
+		require.NoError(t, err)
+
+		ids := readTaskIDs(t, s, collection(tree, true), owner)
+
+		assert.ElementsMatch(t, tree.taskIDs(tree.parent.ID, tree.grandchild.ID), ids)
+	})
+
 	t.Run("sorting by position does not fail for tasks without a position in the view", func(t *testing.T) {
 		s, tree := setup(t)
 		tc := collection(tree, true)
