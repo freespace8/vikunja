@@ -439,7 +439,7 @@ const (
 
 	xgoModule = "src.techknowlogick.com/xgo@v1.9.0"
 	// Same digest as the apibuilder stage in Dockerfile; keep them in sync.
-	xgoImage = "ghcr.io/techknowlogick/xgo@sha256:8cc742b41f043a4fd45d2f63f1fcd12cb27949342df09efb5561f2aadfbe6da3"
+	xgoImage = "ghcr.io/techknowlogick/xgo@sha256:7d5cab968132bf21285686bde17e902e0af080a16d08b439deb7265b276ac6f9"
 )
 
 func projectDist(p *project, sub string) string {

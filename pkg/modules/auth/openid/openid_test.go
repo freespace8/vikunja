@@ -17,6 +17,7 @@
 package openid
 
 import (
+	"bytes"
 	"context"
 	"crypto"
 	"crypto/rand"
@@ -24,16 +25,21 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"image"
+	"image/png"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"code.vikunja.io/api/pkg/config"
 	"code.vikunja.io/api/pkg/models"
+	"code.vikunja.io/api/pkg/modules/avatar"
+	"code.vikunja.io/api/pkg/modules/imageutils"
 	"code.vikunja.io/api/pkg/modules/keyvalue"
 	"code.vikunja.io/api/pkg/utils"
 
@@ -691,49 +697,119 @@ func TestEnforceTOTPIfRequired(t *testing.T) {
 	})
 }
 
-func TestSyncUserAvatarFromOpenID(t *testing.T) {
-	t.Run("empty picture URL resets openid provider to default", func(t *testing.T) {
+func TestResetOpenIDAvatar(t *testing.T) {
+	t.Run("resets openid provider to default", func(t *testing.T) {
 		db.LoadAndAssertFixtures(t)
 		s := db.NewSession()
 		defer s.Close()
 
-		// Use the fixture user that has avatar_provider = "openid"
 		u, err := user.GetUserByID(s, 19)
 		require.NoError(t, err)
 		assert.Equal(t, "openid", u.AvatarProvider, "precondition: user should have openid avatar provider")
 
-		err = syncUserAvatarFromOpenID(s, u, "")
-		require.NoError(t, err)
-		err = s.Commit()
-		require.NoError(t, err)
+		require.NoError(t, resetOpenIDAvatar(s, u))
+		require.NoError(t, s.Commit())
 
-		// Verify the avatar provider was reset to default in the database
 		db.AssertExists(t, "users", map[string]interface{}{
 			"id":              19,
 			"avatar_provider": "default",
 		}, false)
 	})
 
-	t.Run("empty picture URL does not reset non-openid provider", func(t *testing.T) {
+	t.Run("does not reset non-openid provider", func(t *testing.T) {
 		db.LoadAndAssertFixtures(t)
 		s := db.NewSession()
 		defer s.Close()
 
-		// Use a regular user (avatar_provider is empty/"default")
 		u, err := user.GetUserByID(s, 1)
 		require.NoError(t, err)
 
-		err = syncUserAvatarFromOpenID(s, u, "")
-		require.NoError(t, err)
-		err = s.Commit()
-		require.NoError(t, err)
+		require.NoError(t, resetOpenIDAvatar(s, u))
+		require.NoError(t, s.Commit())
 
-		// Verify the avatar provider was NOT changed to "default" or anything else
 		s2 := db.NewSession()
 		defer s2.Close()
 		updatedUser, err := user.GetUserByID(s2, 1)
 		require.NoError(t, err)
 		assert.Empty(t, updatedUser.AvatarProvider, "avatar provider should remain empty for non-openid user")
+	})
+}
+
+func servePicture(t *testing.T) (url string, hits *atomic.Int32) {
+	t.Helper()
+	config.OutgoingRequestsAllowNonRoutableIPs.Set("true")
+	t.Cleanup(func() { config.OutgoingRequestsAllowNonRoutableIPs.Set("false") })
+
+	picture := &bytes.Buffer{}
+	require.NoError(t, png.Encode(picture, image.NewNRGBA(image.Rect(0, 0, 8, 4))))
+	hits = &atomic.Int32{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.Header().Set("Content-Type", "image/png")
+		_, _ = w.Write(picture.Bytes())
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL, hits
+}
+
+func TestGetOrCreateUserLeavesPictureToTheCaller(t *testing.T) {
+	db.LoadAndAssertFixtures(t)
+	pictureURL, hits := servePicture(t)
+
+	s := db.NewSession()
+	defer s.Close()
+	cl := &claims{
+		Email:             "picture-later@example.com",
+		PreferredUsername: "pictureLaterUser",
+		Picture:           pictureURL,
+	}
+	idToken := &oidc.IDToken{Issuer: "https://some.issuer", Subject: "picture-later"}
+
+	u, err := getOrCreateUser(s, cl, &Provider{}, idToken)
+	require.NoError(t, err)
+	require.NoError(t, s.Commit())
+
+	assert.Equal(t, int32(0), hits.Load())
+	s2 := db.NewSession()
+	defer s2.Close()
+	stored, err := user.GetUserByID(s2, u.ID)
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), stored.AvatarFileID)
+	assert.Equal(t, config.DefaultSettingsAvatarProvider.GetString(), stored.AvatarProvider)
+}
+
+func TestSyncUserAvatarFromOpenID(t *testing.T) {
+	t.Run("stores the downloaded picture", func(t *testing.T) {
+		db.LoadAndAssertFixtures(t)
+		pictureURL, hits := servePicture(t)
+
+		syncUserAvatarFromOpenID(t.Context(), 1, pictureURL)
+		avatar.WaitForProviderSyncsForTests()
+
+		assert.Equal(t, int32(1), hits.Load())
+		s := db.NewSession()
+		defer s.Close()
+		stored, err := user.GetUserByID(s, 1)
+		require.NoError(t, err)
+		assert.Equal(t, "openid", stored.AvatarProvider)
+		assert.NotZero(t, stored.AvatarFileID)
+	})
+
+	t.Run("busy decoder leaves the avatar unchanged", func(t *testing.T) {
+		db.LoadAndAssertFixtures(t)
+		pictureURL, hits := servePicture(t)
+		t.Cleanup(imageutils.ExhaustBudgetForTests(10 * time.Millisecond))
+
+		syncUserAvatarFromOpenID(t.Context(), 19, pictureURL)
+		avatar.WaitForProviderSyncsForTests()
+
+		assert.Equal(t, int32(1), hits.Load())
+		s := db.NewSession()
+		defer s.Close()
+		stored, err := user.GetUserByID(s, 19)
+		require.NoError(t, err)
+		assert.Equal(t, "openid", stored.AvatarProvider)
+		assert.Equal(t, int64(0), stored.AvatarFileID)
 	})
 }
 
