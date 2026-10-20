@@ -184,4 +184,56 @@ describe('task cache reconciliation', () => {
 		expect(client.getQueryData<PaginatedTaskResponse>(list)).toEqual({items: [], total: 0})
 		expect(client.getQueryCache().getAll().map(query => query.queryKey)).toEqual([list])
 	})
+	describe('lists that include sub-project tasks', () => {
+		const aggregateScope = {project: 100, view: 10, params: {include_subprojects: true}}
+
+		it('keeps a sub-project task in the list when it is updated', () => {
+			const client = new QueryClient()
+			const list = taskKeys.list(aggregateScope)
+			client.setQueryData(list, {
+				items: [
+					normalizeTask({id: 1, project_id: 100, title: 'parent task'}),
+					normalizeTask({id: 3, project_id: 101, title: 'child task'}),
+				],
+				total: 2,
+			})
+			replaceTaskEverywhere(client, {id: 3, project_id: 101, title: 'child task', done: true})
+			expect(client.getQueryData<PaginatedTaskResponse>(list)).toMatchObject({
+				items: [{id: 1}, {id: 3, done: true}],
+				total: 2,
+			})
+		})
+		it('still drops a moved task from a list that does not include sub-projects', () => {
+			const client = new QueryClient()
+			const list = taskKeys.list({project: 100, view: 10})
+			client.setQueryData(list, {items: [normalizeTask({id: 3, project_id: 100, title: 'task'})], total: 1})
+			replaceTaskEverywhere(client, {id: 3, project_id: 101, title: 'task'})
+			expect(client.getQueryData<PaginatedTaskResponse>(list)).toEqual({items: [], total: 0})
+		})
+		it('drops a deleted sub-project task from the list', () => {
+			const client = new QueryClient()
+			const list = taskKeys.list(aggregateScope)
+			client.setQueryData(list, {items: [normalizeTask({id: 3, project_id: 101, title: 'child task'})], total: 1})
+			removeTaskEverywhere(client, 3)
+			expect(client.getQueryData<PaginatedTaskResponse>(list)).toEqual({items: [], total: 0})
+		})
+		it('refetches an open list even when the caller only marks lists stale', async () => {
+			sdk.projectViewTasksList.mockResolvedValue({data: {items: [], total: 0}})
+			const client = new QueryClient()
+			const aggregate = tasksQuery(aggregateScope)
+			const plain = tasksQuery({project: 100, view: 10})
+			const unsubscribe = [aggregate, plain].map(({queryKey, queryFn}) =>
+				new QueryObserver(client, {queryKey, queryFn}).subscribe(() => {}))
+			await vi.waitFor(() => {
+				expect(client.getQueryData(aggregate.queryKey)).toBeDefined()
+				expect(client.getQueryData(plain.queryKey)).toBeDefined()
+			})
+			expect(sdk.projectViewTasksList).toHaveBeenCalledTimes(2)
+			await invalidateTaskMembership(client, 3)
+			// The server decides whether a task that left the subtree still belongs to the list.
+			expect(sdk.projectViewTasksList).toHaveBeenCalledTimes(3)
+			expect(client.getQueryState(plain.queryKey)?.isInvalidated).toBe(true)
+			unsubscribe.forEach(stop => stop())
+		})
+	})
 })

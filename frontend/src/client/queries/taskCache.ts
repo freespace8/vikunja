@@ -1,4 +1,4 @@
-import {hashKey, type QueryClient, type QueryKey} from '@tanstack/vue-query'
+import {hashKey, type Query, type QueryClient, type QueryKey} from '@tanstack/vue-query'
 import type {Task} from '@/client/generated'
 import {mapTasksDeep, mergeTask, removeTask} from '@/helpers/task'
 import {normalizeTask, taskKeys, type PaginatedTaskResponse, type TaskResponse} from './tasks'
@@ -47,6 +47,9 @@ const dropEverywhere: TaskRemoval = (tasks, id) => containsTask(tasks, id)
 	? removeTask(tasks, id).map(normalizeTask)
 	: undefined
 
+// A list that includes sub-projects holds tasks of other projects than its key's, so the server decides membership.
+const isAggregateKey = (key: QueryKey) => taskKeys.paramsOf(key)?.include_subprojects === true
+
 // Favorites and saved filters span projects.
 const isRealProject = (project: number | null | undefined): project is number =>
 	typeof project === 'number' && project > 0
@@ -76,8 +79,10 @@ function removeTaskFromCollections(client: QueryClient, id: number, removal: Col
 	const remove: TaskRemoval = movedTo === undefined ? dropEverywhere : dropMembership
 	const inScope = (project: number | null | undefined) =>
 		movedTo === undefined || (isRealProject(project) && project !== movedTo)
+	const inListScope = (key: QueryKey) =>
+		inScope(taskKeys.projectOf(key)) && !(movedTo !== undefined && isAggregateKey(key))
 	for (const [key, tasks] of client.getQueriesData<TaskResponse[]>({queryKey: taskKeys.allLists})) {
-		if (!tasks || !inScope(taskKeys.projectOf(key))) continue
+		if (!tasks || !inListScope(key)) continue
 		const items = remove(tasks, id)
 		if (items) client.setQueryData(key, items)
 	}
@@ -85,7 +90,7 @@ function removeTaskFromCollections(client: QueryClient, id: number, removal: Col
 	const removedPerScope = new Map<string, number>()
 	const scopeOf = (key: QueryKey) => hashKey(key.slice(0, -1))
 	for (const [key, list] of client.getQueriesData<PaginatedTaskResponse>({queryKey: taskKeys.lists})) {
-		if (!list || !inScope(taskKeys.projectOf(key))) continue
+		if (!list || !inListScope(key)) continue
 		const items = remove(list.items, id)
 		if (!items) continue
 		client.setQueryData(key, {...list, items})
@@ -140,9 +145,13 @@ export async function invalidateTaskMembership(
 	id?: number,
 	refetchType: 'none' | 'active' = 'none',
 ) {
+	// Membership of a list that includes sub-projects can't be patched locally, so it always refetches.
+	const aggregate = (query: Query) => isAggregateKey(query.queryKey)
 	await Promise.all([
-		client.invalidateQueries({queryKey: taskKeys.lists, refetchType}),
-		client.invalidateQueries({queryKey: taskKeys.allLists, refetchType}),
+		client.invalidateQueries({queryKey: taskKeys.lists, refetchType, predicate: query => !aggregate(query)}),
+		client.invalidateQueries({queryKey: taskKeys.lists, refetchType: 'active', predicate: aggregate}),
+		client.invalidateQueries({queryKey: taskKeys.allLists, refetchType, predicate: query => !aggregate(query)}),
+		client.invalidateQueries({queryKey: taskKeys.allLists, refetchType: 'active', predicate: aggregate}),
 		// Refetching a board returns only the first page per bucket, so mutations patch it instead of refetching.
 		client.invalidateQueries({queryKey: kanbanKeys.all, refetchType: 'none'}),
 		...(id === undefined ? [] : [client.invalidateQueries({queryKey: [...taskKeys.details, id], refetchType})]),
