@@ -229,7 +229,6 @@
 											<KanbanCard
 												class="kanban-card"
 												:task="task"
-												:project-id="projectId"
 												@taskCompletedRecurring="handleRecurringTaskCompletion"
 											/>
 										</li>
