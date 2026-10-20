@@ -18,10 +18,7 @@ package apiv2
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"fmt"
 	"net/http"
 	"strings"
@@ -34,6 +31,7 @@ import (
 	"code.vikunja.io/api/pkg/modules/humabridge"
 	"code.vikunja.io/api/pkg/modules/keyvalue"
 	"code.vikunja.io/api/pkg/user"
+	"code.vikunja.io/api/pkg/utils"
 	"code.vikunja.io/api/pkg/web"
 	webfiles "code.vikunja.io/api/pkg/web/files"
 
@@ -56,29 +54,32 @@ const (
 var uploadTicketTTL = 10 * time.Minute
 
 type uploadTicket struct {
-	UserID int64
-	// 0 when the link was minted with a session instead of an API token.
+	UserID  int64
 	TokenID int64
 	TaskID  int64
 }
 
-// The store has no atomic get-and-delete, so this serialises redemptions within one process.
+// Tickets live in the configured keyvalue store, which has no atomic get-and-delete. This mutex only
+// makes redemption single-use within one process: with the memory store that means a single instance,
+// and with Redis shared by several instances two requests could in theory both redeem one ticket.
 var uploadTicketMu sync.Mutex
 
 // Only a hash of the ticket is stored, so reading the store does not reveal usable links.
 func uploadTicketKey(ticket string) string {
-	sum := sha256.Sum256([]byte(ticket))
-	return uploadTicketKeyPrefix + hex.EncodeToString(sum[:])
+	return uploadTicketKeyPrefix + utils.Sha256Hex(ticket)
 }
 
 func mintUploadTicket(t uploadTicket) (ticket string, expiresAt time.Time, err error) {
-	raw := make([]byte, uploadTicketBytes)
-	if _, err = rand.Read(raw); err != nil {
-		return "", time.Time{}, err
+	raw, err := utils.CryptoRandomBytes(uploadTicketBytes)
+	if err != nil {
+		return "", time.Time{}, fmt.Errorf("could not generate upload ticket: %w", err)
 	}
 	ticket = base64.RawURLEncoding.EncodeToString(raw)
 	expiresAt = time.Now().Add(uploadTicketTTL)
-	return ticket, expiresAt, keyvalue.PutWithTTL(uploadTicketKey(ticket), t, uploadTicketTTL)
+	if err = keyvalue.PutWithTTL(uploadTicketKey(ticket), t, uploadTicketTTL); err != nil {
+		return "", time.Time{}, fmt.Errorf("could not store upload ticket: %w", err)
+	}
+	return ticket, expiresAt, nil
 }
 
 func peekUploadTicket(ticket string) (exists bool, err error) {
@@ -86,7 +87,7 @@ func peekUploadTicket(ticket string) (exists bool, err error) {
 	return keyvalue.GetWithValue(uploadTicketKey(ticket), &t)
 }
 
-// consumeUploadTicket removes the ticket whatever happens next, so a failed redemption cannot be retried.
+// consumeUploadTicket removes the ticket whatever happens next, so a redemption that got this far cannot be retried.
 func consumeUploadTicket(ticket string) (t uploadTicket, exists bool, err error) {
 	uploadTicketMu.Lock()
 	defer uploadTicketMu.Unlock()
@@ -127,7 +128,7 @@ func RegisterTaskAttachmentUploadLinkRoutes(api huma.API) {
 	Register(api, huma.Operation{
 		OperationID: "task-attachments-upload-link",
 		Summary:     "Create a one-time attachment upload link",
-		Description: "Returns a single-use upload_url for adding files to this task, valid for 10 minutes. This call does not upload anything: send the local file to upload_url yourself with a plain HTTP multipart POST under the \"files\" field, for example `curl -X POST '<upload_url>' -F 'files=@/path/to/file.png'` (curl_example in the response is ready to run). Do not send an Authorization header to upload_url. The link stops working after one upload attempt or when it expires; request a new one if the upload fails. Requires write access to the task.",
+		Description: "Returns a single-use upload_url for adding files to this task, valid for 10 minutes. This call does not upload anything: send the local file to upload_url yourself with a plain HTTP multipart POST under the \"files\" field, for example `curl -X POST '<upload_url>' -F 'files=@/path/to/file.png'` (curl_example in the response is ready to run). Do not send an Authorization header to upload_url. The link expires after 10 minutes and is used up by the first upload request that reaches the server's upload handler, even if some or all files in it fail. A request rejected earlier, for example for a wrong field name, an oversized body or a timeout, does not use the link up and can be retried with it. Request a new link if the link is gone. Requires an API token and write access to the task.",
 		Method:      http.MethodPost,
 		Path:        "/tasks/{task}/attachments/upload-link",
 		Tags:        []string{"task"},
@@ -138,7 +139,7 @@ func RegisterTaskAttachmentUploadLinkRoutes(api huma.API) {
 	op := withUploadLimits(huma.Operation{
 		OperationID: "mcp-uploads-redeem",
 		Summary:     "Upload task attachments with a one-time upload link",
-		Description: "Uploads one or more files as attachments to the task the upload link was created for, via multipart/form-data under the \"files\" field. Public: the ticket in the path is the only credential, so send no Authorization header. A ticket works for one request and expires 10 minutes after creation; an unknown, expired or used ticket returns 404. The upload runs with the permissions of the user (and API token) that created the link, checked again now. Returns the same result as the authenticated upload endpoint, including per-file errors such as exceeding the configured size limit.",
+		Description: "Uploads one or more files as attachments to the task the upload link was created for, via multipart/form-data under the \"files\" field. Public: the ticket in the path is the only credential, so send no Authorization header. A ticket expires 10 minutes after creation and is used up by the first request that reaches the upload handler; a request rejected earlier (wrong field name, oversized body, timeout) does not use it up. An unknown, expired or used ticket returns 404. Tickets are stored in the configured keyvalue store, so single use is only guaranteed within one server process. The upload runs with the permissions of the user (and API token) that created the link, checked again now. Returns the same result as the authenticated upload endpoint, including per-file errors such as exceeding the configured size limit.",
 		Method:      http.MethodPost,
 		Path:        MCPUploadsPath + "{ticket}",
 		Tags:        []string{"mcp"},
@@ -178,6 +179,15 @@ func taskAttachmentsUploadLink(ctx context.Context, in *struct {
 	if err != nil {
 		return nil, translateDomainError(err)
 	}
+	var tokenID int64
+	if ec := humabridge.EchoContextFrom(ctx); ec != nil {
+		if token, ok := (*ec).Get("api_token").(*models.APIToken); ok && token != nil {
+			tokenID = token.ID
+		}
+	}
+	if tokenID == 0 {
+		return nil, huma.Error403Forbidden("upload links can only be created with an API token")
+	}
 	publicURL := strings.TrimRight(config.ServicePublicURL.GetString(), "/")
 	if publicURL == "" {
 		return nil, huma.Error503ServiceUnavailable("service.publicurl is not configured, so an upload link cannot be built")
@@ -195,15 +205,13 @@ func taskAttachmentsUploadLink(ctx context.Context, in *struct {
 		return nil, huma.Error403Forbidden("forbidden")
 	}
 
-	var tokenID int64
-	if ec := humabridge.EchoContextFrom(ctx); ec != nil {
-		if token, ok := (*ec).Get("api_token").(*models.APIToken); ok && token != nil {
-			tokenID = token.ID
-		}
-	}
-	ticket, expiresAt, err := mintUploadTicket(uploadTicket{UserID: u.ID, TokenID: tokenID, TaskID: in.TaskID})
+	ticket, expiresAt, err := mintUploadTicket(uploadTicket{
+		UserID:  u.ID,
+		TokenID: tokenID,
+		TaskID:  in.TaskID,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("could not store upload ticket: %w", err)
+		return nil, err
 	}
 
 	uploadURL := publicURL + GroupPrefix + MCPUploadsPath + ticket
@@ -219,7 +227,7 @@ func taskAttachmentsUploadLink(ctx context.Context, in *struct {
 func mcpUploadsRedeem(_ context.Context, in *mcpUploadInput) (*taskAttachmentUploadBody, error) {
 	ticket, exists, err := consumeUploadTicket(in.Ticket)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("could not redeem upload ticket: %w", err)
 	}
 	if !exists {
 		return nil, huma.Error404NotFound(errUploadTicketInvalid)
@@ -229,16 +237,14 @@ func mcpUploadsRedeem(_ context.Context, in *mcpUploadInput) (*taskAttachmentUpl
 	defer s.Close()
 
 	// The link outlives neither its token nor its owner.
-	if ticket.TokenID != 0 {
-		token, err := models.GetAPITokenByID(s, ticket.TokenID)
-		if err != nil {
-			_ = s.Rollback()
-			return nil, err
-		}
-		if token.ID == 0 || token.OwnerID != ticket.UserID || time.Now().After(token.ExpiresAt) {
-			_ = s.Rollback()
-			return nil, huma.Error404NotFound(errUploadTicketInvalid)
-		}
+	token, err := models.GetAPITokenByID(s, ticket.TokenID)
+	if err != nil {
+		_ = s.Rollback()
+		return nil, fmt.Errorf("could not load the token of an upload ticket: %w", err)
+	}
+	if token.ID == 0 || token.OwnerID != ticket.UserID || time.Now().After(token.ExpiresAt) {
+		_ = s.Rollback()
+		return nil, huma.Error404NotFound(errUploadTicketInvalid)
 	}
 	owner, err := user.GetUserByID(s, ticket.UserID)
 	if err != nil {
@@ -246,7 +252,7 @@ func mcpUploadsRedeem(_ context.Context, in *mcpUploadInput) (*taskAttachmentUpl
 		if user.IsErrUserStatusError(err) || user.IsErrUserDoesNotExist(err) {
 			return nil, huma.Error404NotFound(errUploadTicketInvalid)
 		}
-		return nil, err
+		return nil, fmt.Errorf("could not load the owner of an upload ticket: %w", err)
 	}
 
 	return uploadFormFiles(s, owner, ticket.TaskID, in.RawBody.Data().Files)

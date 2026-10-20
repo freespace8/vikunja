@@ -71,7 +71,10 @@ func createAttachmentToken(t *testing.T, permissions models.APIPermissions) *mod
 }
 
 func uploadPermissions() models.APIPermissions {
-	return models.APIPermissions{"mcp": {"access"}, "tasks_attachments": {"create"}}
+	return models.APIPermissions{
+		"mcp":               {"access"},
+		"tasks_attachments": {"create"},
+	}
 }
 
 func mintViaMCP(t *testing.T, c *mcpClient, task int64) uploadLink {
@@ -132,8 +135,14 @@ func TestMCP_AttachmentUpload_ToolFollowsScopes(t *testing.T) {
 	assert.Equal(t, map[string]bool{uploadLinkTool: true}, names)
 
 	for name, permissions := range map[string]models.APIPermissions{
-		"read and delete only": {"mcp": {"access"}, "tasks_attachments": {"read_all", "delete"}},
-		"tasks create":         {"mcp": {"access"}, "tasks": {"create", "update"}},
+		"read and delete only": {
+			"mcp":               {"access"},
+			"tasks_attachments": {"read_all", "delete"},
+		},
+		"tasks create": {
+			"mcp":   {"access"},
+			"tasks": {"create", "update"},
+		},
 	} {
 		token := createAttachmentToken(t, permissions)
 		assert.NotContains(t, newMCPClientOn(t, e, token.Token).toolNames(), uploadLinkTool, name)
@@ -191,16 +200,12 @@ func TestMCP_AttachmentUpload_RoundTrip(t *testing.T) {
 	assert.Equal(t, before+1, attachmentCount(t, 1))
 }
 
-func TestMCP_AttachmentUpload_SessionMintedLink(t *testing.T) {
+func TestMCP_AttachmentUpload_SessionCannotMint(t *testing.T) {
 	e, err := setupTestEnv()
 	require.NoError(t, err)
 	rec := humaRequest(t, e, http.MethodPost, "/api/v2/tasks/1/attachments/upload-link", "", humaTokenFor(t, &testuser1), "")
-	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
-	var link uploadLink
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &link))
-
-	rec = redeem(t, e, link.UploadURL, 10)
-	assert.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	assert.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), "API token")
 }
 
 func TestMCP_AttachmentUpload_MintRequiresAUserWithTheScope(t *testing.T) {
@@ -214,7 +219,14 @@ func TestMCP_AttachmentUpload_MintRequiresAUserWithTheScope(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, mint(mcpFullToken).Code)
 	assert.Equal(t, http.StatusCreated, mint(createAttachmentToken(t, uploadPermissions()).Token).Code)
 
-	shareToken, err := auth.NewLinkShareJWTAuthtoken(&models.LinkSharing{ID: 1, Hash: "test", ProjectID: 1, Permission: models.PermissionWrite, SharingType: models.SharingTypeWithoutPassword, SharedByID: 1})
+	shareToken, err := auth.NewLinkShareJWTAuthtoken(&models.LinkSharing{
+		ID:          1,
+		Hash:        "test",
+		ProjectID:   1,
+		Permission:  models.PermissionWrite,
+		SharingType: models.SharingTypeWithoutPassword,
+		SharedByID:  1,
+	})
 	require.NoError(t, err)
 	assert.Equal(t, http.StatusForbidden, mint(shareToken).Code)
 }
@@ -295,6 +307,30 @@ func TestMCP_AttachmentUpload_RedeemRejectsDeadTokens(t *testing.T) {
 			link := mintViaMCP(t, newMCPClientOn(t, e, token.Token), 1)
 
 			kill(t, token)
+
+			before := attachmentCount(t, 1)
+			rec := redeem(t, e, link.UploadURL, 10)
+			assert.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+			assert.Equal(t, before, attachmentCount(t, 1))
+		})
+	}
+}
+
+func TestMCP_AttachmentUpload_RedeemRejectsUnavailableOwner(t *testing.T) {
+	for name, status := range map[string]user.Status{
+		"disabled": user.StatusDisabled,
+		"locked":   user.StatusAccountLocked,
+	} {
+		t.Run(name, func(t *testing.T) {
+			e, err := setupTestEnv()
+			require.NoError(t, err)
+			link := mintViaMCP(t, newMCPClientOn(t, e, createAttachmentToken(t, uploadPermissions()).Token), 1)
+
+			s := db.NewSession()
+			_, err = s.ID(1).Cols("status").Update(&user.User{Status: status})
+			require.NoError(t, err)
+			require.NoError(t, s.Commit())
+			s.Close()
 
 			before := attachmentCount(t, 1)
 			rec := redeem(t, e, link.UploadURL, 10)

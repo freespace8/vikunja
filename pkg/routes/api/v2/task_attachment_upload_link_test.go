@@ -28,7 +28,11 @@ import (
 
 func TestUploadTicket(t *testing.T) {
 	keyvalue.InitStorage()
-	want := uploadTicket{UserID: 1, TokenID: 12, TaskID: 3}
+	want := uploadTicket{
+		UserID:  1,
+		TokenID: 12,
+		TaskID:  3,
+	}
 
 	t.Run("single use", func(t *testing.T) {
 		ticket, expiresAt, err := mintUploadTicket(want)

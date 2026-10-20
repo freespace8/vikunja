@@ -167,11 +167,11 @@ func NewEcho() *echo.Echo {
 			LogRemoteIP:  true,
 			LogUserAgent: true,
 			HandleError:  true,
-			LogValuesFunc: func(_ *echo.Context, v middleware.RequestLoggerValues) error {
+			LogValuesFunc: func(c *echo.Context, v middleware.RequestLoggerValues) error {
 				attrs := []slog.Attr{
 					slog.String("remote_ip", v.RemoteIP),
 					slog.String("method", v.Method),
-					slog.String("uri", v.URI),
+					slog.String("uri", redactUploadTicket(c, v.URI)),
 					slog.Int("status", v.Status),
 					slog.Duration("latency", v.Latency),
 					slog.String("user_agent", v.UserAgent),
@@ -309,6 +309,19 @@ func RegisterRoutes(e *echo.Echo) {
 	collectRoutesForAPITokens(e)
 }
 
+const (
+	mcpUploadsRoute    = apiv2.GroupPrefix + apiv2.MCPUploadsPath + ":ticket"
+	redactedUploadPath = apiv2.GroupPrefix + apiv2.MCPUploadsPath + "<redacted>"
+)
+
+// The ticket in an upload link is its credential, so it must not reach logs or error reports.
+func redactUploadTicket(c *echo.Context, uri string) string {
+	if c.Path() == mcpUploadsRoute {
+		return redactedUploadPath
+	}
+	return uri
+}
+
 // unauthenticatedAPIPaths contains paths that don't require JWT authentication
 var unauthenticatedAPIPaths = map[string]bool{
 	"/api/v1/register":                       true,
@@ -348,7 +361,7 @@ var unauthenticatedAPIPaths = map[string]bool{
 	"/api/v2/auth/openid/:provider/callback": true,
 
 	// One-time attachment upload links: the ticket in the path is the credential.
-	"/api/v2/mcp/uploads/:ticket": true,
+	mcpUploadsRoute: true,
 
 	// Testing endpoints authenticate with the testing token via a custom
 	// Authorization header, not a JWT; mounted only when that token is set.
