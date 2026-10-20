@@ -124,15 +124,20 @@ export function removeTaskFromBoard(client: QueryClient, key: QueryKey, id: numb
 	client.setQueryData<BoardData>(key, board => board && removeFromBoard(board, id, dropMembership))
 }
 
-// Whether `updated` puts a cached task into another project than the one the cache holds it in.
-export function changesTaskProject(client: QueryClient, updated: Task): boolean {
-	if (updated.id === undefined || !updated.project_id) return false
-	const cached = [
+// The top-level copies of a task in the detail and list caches.
+export function cachedTaskCopies(client: QueryClient, id: number): TaskResponse[] {
+	return [
 		...client.getQueriesData<TaskResponse>({queryKey: taskKeys.details}).map(([, task]) => task),
 		...client.getQueriesData<PaginatedTaskResponse>({queryKey: taskKeys.lists})
 			.flatMap(([, list]) => list?.items ?? []),
 		...client.getQueriesData<TaskResponse[]>({queryKey: taskKeys.allLists}).flatMap(([, tasks]) => tasks ?? []),
-	].find(task => task?.id === updated.id)
+	].filter((task): task is TaskResponse => task?.id === id)
+}
+
+// Whether `updated` puts a cached task into another project than the one the cache holds it in.
+export function changesTaskProject(client: QueryClient, updated: Task): boolean {
+	if (updated.id === undefined || !updated.project_id) return false
+	const cached = cachedTaskCopies(client, updated.id)[0]
 	return cached !== undefined && cached.project_id !== updated.project_id
 }
 

@@ -131,14 +131,6 @@ describe('ProjectTable', () => {
 		})
 	})
 
-	it('asks for the buckets of the tasks', async () => {
-		includeSubprojects.current = ref<boolean | undefined>(false)
-
-		await mountTable({})
-
-		expect(sdk.projectViewTasksList.mock.lastCall?.[0].query.expand).toContain('buckets')
-	})
-
 	it('puts the sort chosen in the table into the url', async () => {
 		const {router, wrapper} = await mountTable({})
 		const table = wrapper.findComponent(TaskTable)

@@ -603,6 +603,73 @@ describe('task mutations', () => {
 		])
 	})
 
+	describe('toggling done on a task in a list without a board', () => {
+		const viewBuckets = [
+			{id: 7, project_view_id: 2, title: 'To-Do'},
+			{id: 8, project_view_id: 2, title: 'Doing'},
+			{id: 9, project_view_id: 2, title: 'Done'},
+		]
+
+		async function seedList(bucket: number) {
+			const {projectKeys} = await import('./projects')
+			const client = new QueryClient()
+			client.setQueryData(projectKeys.list(), {
+				projects: [{id: 1, views: [{id: 2, default_bucket_id: 7, done_bucket_id: 9}]}],
+				favoriteProject: null,
+				savedFilterProjects: [],
+			})
+			const key = taskKeys.list({project: 1, view: 1, params: {expand: ['buckets']}})
+			client.setQueryData(key, {
+				items: [{id: 1, project_id: 1, done: bucket === 9, buckets: [viewBuckets[bucket - 7]]}],
+				total: 1,
+				total_pages: 1,
+			})
+			sdk.bucketsList.mockResolvedValue({data: {items: viewBuckets}})
+			return {client, key}
+		}
+
+		const listBucketTitle = (client: QueryClient, key: ReturnType<typeof taskKeys.list>) =>
+			client.getQueryData<PaginatedTask>(key)?.items?.[0]?.buckets?.[0]?.title
+
+		it('shows the done bucket when the task is marked done', async () => {
+			const {client, key} = await seedList(8)
+			sdk.patchTasksRead.mockResolvedValue({data: {id: 1, project_id: 1, done: true}})
+			await client.getMutationCache()
+				.build(client, updateTaskMutationOptions(true))
+				.execute({id: 1, project_id: 1, done: true})
+			expect(listBucketTitle(client, key)).toBe('Done')
+			expect(sdk.bucketsList).toHaveBeenCalledWith(expect.objectContaining({path: {project: 1, view: 2}}))
+		})
+
+		it('shows the default bucket when the task is marked undone', async () => {
+			const {client, key} = await seedList(9)
+			sdk.patchTasksRead.mockResolvedValue({data: {id: 1, project_id: 1, done: false}})
+			await client.getMutationCache()
+				.build(client, updateTaskMutationOptions(true))
+				.execute({id: 1, project_id: 1, done: false})
+			expect(listBucketTitle(client, key)).toBe('To-Do')
+		})
+
+		it('does not load the buckets when the task already sits in the target bucket', async () => {
+			const {client} = await seedList(9)
+			sdk.patchTasksRead.mockResolvedValue({data: {id: 1, project_id: 1, done: true}})
+			await client.getMutationCache()
+				.build(client, updateTaskMutationOptions(true))
+				.execute({id: 1, project_id: 1, done: true})
+			expect(sdk.bucketsList).not.toHaveBeenCalled()
+		})
+
+		it('leaves the cached bucket alone when the bucket list cannot be loaded', async () => {
+			const {client, key} = await seedList(8)
+			sdk.bucketsList.mockRejectedValue(new Error('offline'))
+			sdk.patchTasksRead.mockResolvedValue({data: {id: 1, project_id: 1, done: true}})
+			await client.getMutationCache()
+				.build(client, updateTaskMutationOptions(true))
+				.execute({id: 1, project_id: 1, done: true})
+			expect(listBucketTitle(client, key)).toBe('Doing')
+		})
+	})
+
 	it('renames the done bucket on a detail opened without a board from the cached bucket list', async () => {
 		const {projectKeys} = await import('./projects')
 		const client = new QueryClient()

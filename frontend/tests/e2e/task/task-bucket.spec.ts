@@ -7,7 +7,7 @@ import {TaskFactory} from '../../factories/task'
 
 const BUCKET_TITLES = ['To-Do', 'Doing', 'Done']
 
-async function seedBuckets() {
+async function seedBuckets({doneBucket = false} = {}) {
 	const dueSoon = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
 	const project = (await ProjectFactory.create(1, {
 		id: 1,
@@ -31,6 +31,7 @@ async function seedBuckets() {
 		title: 'Kanban',
 		view_kind: 3,
 		bucket_configuration_mode: 1,
+		...(doneBucket ? {done_bucket_id: 3} : {}),
 	}, false)
 	const buckets = await BucketFactory.create(BUCKET_TITLES.length, {
 		id: (i: number) => i,
@@ -177,5 +178,38 @@ test.describe('Task bucket', () => {
 		await page.reload()
 
 		await expect(tasks.filter({hasText: 'Doing task'}).locator('.task-bucket')).toHaveText('Done')
+	})
+
+	test('Moves the badge to the done bucket when a task is ticked in the list and back when unticked', async ({
+		authenticatedPage: page,
+	}) => {
+		await seedBuckets({doneBucket: true})
+		await page.goto('/projects/1/1')
+		const row = page.locator('.list-view .single-task').filter({hasText: 'Doing task'})
+		await expect(row.locator('.task-bucket')).toHaveText('Doing')
+
+		const tick = page.waitForResponse(response =>
+			response.url().includes('/api/v2/tasks/1') && response.request().method() !== 'GET',
+		)
+		await row.locator('.fancy-checkbox').click()
+		await tick
+
+		await expect(row.locator('.task-bucket')).toHaveText('Done')
+
+		await page.reload()
+
+		await expect(row.locator('.task-bucket')).toHaveText('Done')
+
+		const untick = page.waitForResponse(response =>
+			response.url().includes('/api/v2/tasks/1') && response.request().method() !== 'GET',
+		)
+		await row.locator('.fancy-checkbox').click()
+		await untick
+
+		await expect(row.locator('.task-bucket')).toHaveText('To-Do')
+
+		await page.reload()
+
+		await expect(row.locator('.task-bucket')).toHaveText('To-Do')
 	})
 })

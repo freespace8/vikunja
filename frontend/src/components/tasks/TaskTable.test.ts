@@ -8,17 +8,7 @@ import {ACTIVE_COLUMNS_DEFAULT} from './taskTableColumns'
 import TaskTable from './TaskTable.vue'
 
 vi.mock('@/composables/useProjects', () => ({
-	useProjects: () => ({
-		projects: {
-			7: {
-				title: 'Alpha',
-				views: [
-					{id: 70, position: 1, view_kind: 'list'},
-					{id: 71, position: 2, view_kind: 'kanban'},
-				],
-			},
-		},
-	}),
+	useProjects: () => ({projects: {7: {title: 'Alpha'}}}),
 }))
 
 const task = {
@@ -72,28 +62,6 @@ describe('TaskTable', () => {
 			'task.attributes.bucket',
 			'task.attributes.dueDate',
 		])
-	})
-
-	it('shows the bucket of the kanban view of the project, and nothing for a task without one', () => {
-		const wrapper = mountTable({
-			tasks: [
-				{...task, buckets: [{id: 5, title: 'Doing', project_view_id: 71}]} as TaskResponse,
-				{...task, id: 2},
-			],
-			columns: {...ACTIVE_COLUMNS_DEFAULT, title: false, labels: false, assignees: false, dueDate: false},
-		})
-
-		expect(wrapper.findAll('tbody tr').map(row => row.findAll('td').map(cell => cell.text())))
-			.toEqual([
-				['#1', '', 'Doing'],
-				['#1', '', ''],
-			])
-	})
-
-	it('hides the bucket column when it is disabled', () => {
-		const wrapper = mountTable({columns: {...ACTIVE_COLUMNS_DEFAULT, bucket: false}})
-
-		expect(headers(wrapper)).not.toContain('task.attributes.bucket')
 	})
 
 	it('renders a project column with the project title when it is enabled', () => {

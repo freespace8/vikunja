@@ -76,13 +76,16 @@
 					:labels="task.labels ?? []"
 				/>
 
-				<span
-					v-if="bucket?.title"
-					v-tooltip="$t('task.detail.bucketSelectLabel', {bucket: bucket.title})"
-					class="tag task-bucket mis-2 mie-1"
-				>
-					{{ bucket.title }}
-				</span>
+				<template v-if="bucket?.title">
+					<span
+						v-tooltip="$t('task.detail.bucketSelectLabel', {bucket: bucket.title})"
+						aria-hidden="true"
+						class="tag task-bucket mis-2 mie-1"
+					>
+						{{ bucket.title }}
+					</span>
+					<span class="is-sr-only">{{ $t('task.detail.bucketSelectLabel', {bucket: bucket.title}) }}</span>
+				</template>
 
 				<AssigneeList
 					v-if="(task.assignees?.length ?? 0) > 0"

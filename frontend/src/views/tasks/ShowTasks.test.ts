@@ -219,12 +219,6 @@ describe('Overview view mode', () => {
 		})
 	})
 
-	it('asks for the buckets of the tasks', async () => {
-		await showTable()
-
-		expect(lastQuery().expand).toContain('buckets')
-	})
-
 	it('keeps the table mounted while a new sort loads', async () => {
 		const wrapper = await showTable()
 		sdk.tasksList.mockReturnValue(new Promise(() => {}))

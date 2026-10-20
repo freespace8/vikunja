@@ -14,7 +14,7 @@ export function contextMutationOptions<TData, TInput, TOptimistic = undefined>(o
 		queryKeys: (input: TInput, client: QueryClient) => readonly QueryKey[]
 		update: (input: TInput, client: QueryClient) => TOptimistic
 	}
-	onSuccess?: (data: TData, input: TInput, client: QueryClient, optimistic: TOptimistic) => void
+	onSuccess?: (data: TData, input: TInput, client: QueryClient, optimistic: TOptimistic) => unknown
 	onSettled?: (input: TInput, client: QueryClient, optimistic: TOptimistic) => Promise<unknown>
 	successMessage?: (data: TData, input: TInput) => string | undefined
 	toastError?: (input: TInput) => boolean
@@ -37,9 +37,9 @@ export function contextMutationOptions<TData, TInput, TOptimistic = undefined>(o
 			assertClientRequestContext(request)
 			return data
 		},
-		onSuccess: (data, input, context, {client}) => {
+		onSuccess: async (data, input, context, {client}) => {
 			assertClientRequestContext(context.request)
-			options.onSuccess?.(data, input, client, context.optimistic)
+			await options.onSuccess?.(data, input, client, context.optimistic)
 			const message = options.successMessage?.(data, input)
 			if (message) success({message})
 		},

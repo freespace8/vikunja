@@ -24,11 +24,12 @@ import {
 	type JsonPatchOp,
 	type Bucket,
 } from '@/client/generated'
-import {assertClientRequestContext, captureClientRequestContext} from '@/client/requestContext'
+import {assertClientRequestContext, captureClientRequestContext, isRequestContextAbort} from '@/client/requestContext'
 import {contextMutationOptions} from './contextMutation'
 import {normalizeTask, taskKeys, type PaginatedTaskResponse, type TaskResponse} from './tasks'
-import {bucketKeys, kanbanKeys, normalizeBucket, type BoardData} from './kanban'
+import {bucketKeys, bucketsQuery, kanbanKeys, normalizeBucket, type BoardData} from './kanban'
 import {
+	cachedTaskCopies,
 	changesTaskProject,
 	invalidateTaskMembership,
 	mapTaskEverywhere,
@@ -84,7 +85,7 @@ function taskPatchBody(task: Task): JsonPatchOp[] {
 	return Object.entries(taskWriteBody(task)).map(([field, value]) => ({op: 'add', path: `/${field}`, value}))
 }
 
-function reconcileDoneBuckets(client: QueryClient, task: TaskResponse) {
+async function reconcileDoneBuckets(client: QueryClient, task: TaskResponse) {
 	const handled = new Set<number>()
 	for (const [key, board] of client.getQueriesData<BoardData>({queryKey: kanbanKeys.all})) {
 		const project = kanbanKeys.projectOf(key)
@@ -106,20 +107,20 @@ function reconcileDoneBuckets(client: QueryClient, task: TaskResponse) {
 		client.setQueryData(key, {...board, buckets: buckets.map(normalizeBucket)})
 		reconcileTaskBuckets(client, {project, view: viewId, bucket: target, task: task.id})
 	}
-	reconcileDoneBucketsWithoutBoard(client, task, handled)
+	await reconcileDoneBucketsWithoutBoard(client, task, handled)
 }
 
-// Without a board holding the card, the detail's own buckets array is the only record of where it sits.
-function reconcileDoneBucketsWithoutBoard(client: QueryClient, task: TaskResponse, handled: Set<number>) {
+// Without a board holding the card, the buckets array of the cached task copies is the only record of where it sits.
+async function reconcileDoneBucketsWithoutBoard(client: QueryClient, task: TaskResponse, handled: Set<number>) {
 	for (const view of getCachedProject(task.project_id, client)?.views ?? []) {
 		if (view.id === undefined || handled.has(view.id) || !view.done_bucket_id) continue
 		const source = cachedTaskBucketId(client, task.id, view.id)
 		if (source === undefined) continue
-		const target = task.done
-			? view.done_bucket_id
-			: source === view.done_bucket_id
-				? getDefaultBucketId(view, cachedViewBuckets(client, task.project_id, view.id) ?? [])
-				: undefined
+		const moves = task.done ? source !== view.done_bucket_id : source === view.done_bucket_id
+		if (!moves) continue
+		// The titles are needed to rename the bucket, and lists have no refetch that would bring them.
+		const buckets = await loadViewBuckets(client, task.project_id, view.id)
+		const target = task.done ? view.done_bucket_id : getDefaultBucketId(view, buckets ?? [])
 		if (target === undefined || target === source) continue
 		reconcileTaskBuckets(client, {
 			project: task.project_id,
@@ -131,12 +132,25 @@ function reconcileDoneBucketsWithoutBoard(client: QueryClient, task: TaskRespons
 }
 
 function cachedTaskBucketId(client: QueryClient, task: number, view: number): number | undefined {
-	for (const [, detail] of client.getQueriesData<TaskResponse>({queryKey: taskKeys.details})) {
-		if (detail?.id !== task) continue
-		const bucket = detail.buckets?.find(item => item.project_view_id === view)
+	for (const copy of cachedTaskCopies(client, task)) {
+		const bucket = copy.buckets?.find(item => item.project_view_id === view)
 		if (bucket?.id !== undefined) return bucket.id
 	}
 	return undefined
+}
+
+async function loadViewBuckets(client: QueryClient, project: number, view: number): Promise<Bucket[] | undefined> {
+	const cached = cachedViewBuckets(client, project, view)
+	if (cached) return cached
+	const request = captureClientRequestContext()
+	try {
+		const buckets = await client.fetchQuery({...bucketsQuery(project, view), meta: {handlesError: true}})
+		assertClientRequestContext(request)
+		return buckets
+	} catch (cause) {
+		if (isRequestContextAbort(cause)) throw cause
+		return undefined
+	}
 }
 
 function cachedViewBuckets(client: QueryClient, project: number, view: number) {
@@ -196,9 +210,9 @@ export function updateTaskMutationOptions(optimistic = false) {
 				return changesProject
 			},
 		},
-		onSuccess: (task, input, client) => {
+		onSuccess: async (task, input, client) => {
 			replaceTaskEverywhere(client, task)
-			reconcileDoneBuckets(client, normalizeTask({...task, id: input.id}))
+			await reconcileDoneBuckets(client, normalizeTask({...task, id: input.id}))
 		},
 		onSettled: ({id}, client, changedProject) => invalidateTaskMembership(client, id, 'none', changedProject),
 	})
