@@ -2277,7 +2277,7 @@ export type TaskAttachmentDownloadLink = {
      */
     readonly $schema?: string;
     /**
-     * A ready-to-run curl command that saves the file to the current directory under a safe name.
+     * A ready-to-run curl command that saves the file to the current directory as vikunja-<attachment id>-<name>, so it cannot overwrite an unrelated local file.
      */
     readonly curl_example?: string;
     /**
