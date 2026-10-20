@@ -141,24 +141,7 @@ func taskAttachmentsUpload(ctx context.Context, in *taskAttachmentUploadInput) (
 	s := db.NewSession()
 	defer s.Close()
 
-	formFiles := in.RawBody.Data().Files
-	uploads := make([]*models.AttachmentToUpload, 0, len(formFiles))
-	for _, file := range formFiles {
-		uploads = append(uploads, &models.AttachmentToUpload{Reader: file, Filename: file.Filename, Size: uint64(file.Size)})
-	}
-
-	success, failures, err := models.UploadTaskAttachments(s, a, in.TaskID, uploads)
-	if err != nil {
-		_ = s.Rollback()
-		return nil, translateDomainError(err)
-	}
-
-	if err := s.Commit(); err != nil {
-		_ = s.Rollback()
-		return nil, translateDomainError(err)
-	}
-
-	return &taskAttachmentUploadBody{Body: webfiles.BuildUploadResult(success, failures)}, nil
+	return uploadFormFiles(s, a, in.TaskID, in.RawBody.Data().Files)
 }
 
 // taskAttachmentsDownload exists because no handler.Do* fits a file body; bytes

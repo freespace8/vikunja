@@ -347,6 +347,9 @@ var unauthenticatedAPIPaths = map[string]bool{
 	auth.RefreshTokenPathV2:                  true,
 	"/api/v2/auth/openid/:provider/callback": true,
 
+	// One-time attachment upload links: the ticket in the path is the credential.
+	"/api/v2/mcp/uploads/:ticket": true,
+
 	// Testing endpoints authenticate with the testing token via a custom
 	// Authorization header, not a JWT; mounted only when that token is set.
 	"/api/v2/test/all":    true,

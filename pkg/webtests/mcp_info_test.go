@@ -73,11 +73,13 @@ func TestMCPInfo(t *testing.T) {
 			var typed map[string][]string
 			require.NoError(t, json.Unmarshal(info.Presets["typed"], &typed))
 			crud := []string{"create", "delete", "read_all", "read_one", "update"}
-			assert.Len(t, typed, 6)
+			assert.Len(t, typed, 7)
 			for _, group := range []string{"tasks", "projects", "labels", "tasks_comments"} {
 				assert.ElementsMatch(t, crud, typed[group], group)
 			}
 			assert.ElementsMatch(t, []string{"create", "delete", "read_all"}, typed["tasks_assignees"])
+			assert.Equal(t, []string{"create"}, typed["tasks_attachments"])
+			assert.Contains(t, info.Routes["tasks_attachments"], "create")
 			assert.Contains(t, typed["other"], "users")
 			for _, permission := range typed["other"] {
 				token := &models.APIToken{APIPermissions: models.APIPermissions{"other": {permission}}}
