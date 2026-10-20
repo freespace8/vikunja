@@ -9,6 +9,7 @@
 			<div class="filter-container">
 				<SortPopup
 					v-model="sortByParam"
+					:hide-manual="includeSubprojects"
 				/>
 				<FilterPopup
 					v-if="!isSavedFilterProject(project)"
@@ -73,6 +74,7 @@
 							<SingleTaskInProject
 								:ref="(el) => setTaskRef(el as InstanceType<typeof SingleTaskInProject> | null, index)"
 								:show-list-color="false"
+								:show-project="includeSubprojects"
 								:can-mark-as-done="canWrite || isPseudoProject"
 								:the-task="t"
 								:all-tasks="allTasks"
@@ -114,6 +116,7 @@ import Pagination from '@/components/misc/Pagination.vue'
 import SortPopup from '@/components/project/partials/SortPopup.vue'
 
 import {useTaskList} from '@/composables/useTaskList'
+import {useIncludeSubprojects} from '@/composables/useIncludeSubprojects'
 import {useTaskDragToProject} from '@/composables/useTaskDragToProject'
 import {useCurrentProject} from '@/composables/useCurrentProject'
 import {shouldShowTaskInListView} from '@/composables/useTaskListFiltering'
@@ -143,6 +146,8 @@ const ctaVisible = ref(false)
 
 const drag = ref(false)
 
+const includeSubprojects = useIncludeSubprojects(() => projectId.value)
+
 const {
 	tasks: allTasks,
 	loading,
@@ -158,6 +163,7 @@ const {
 	() => projectId.value === -1
 		? ['comment_count', 'is_unread']
 		: ['subtasks', 'comment_count', 'is_unread'],
+	() => includeSubprojects.value,
 )
 const showLoading = useDelayedLoading(loading)
 
@@ -190,7 +196,10 @@ onMounted(async () => {
 	ctaVisible.value = true
 })
 
-const canDragTasks = computed(() => canWrite.value || isSavedFilterProject(project.value))
+// Sub-project tasks have no position in this view, so there is no order to drag them into.
+const canDragTasks = computed(() =>
+	(canWrite.value || isSavedFilterProject(project.value)) && !includeSubprojects.value,
+)
 
 const isTouchDevice = ref(false)
 if (typeof window !== 'undefined') {

@@ -23,6 +23,13 @@ vi.mock('@/composables/useTaskDragToProject', () => ({
 	}),
 }))
 
+const aggregate = vi.hoisted(() => ({value: false}))
+// Read once per mount, so a test sets the flag before mounting.
+vi.mock('@/composables/useIncludeSubprojects', async () => {
+	const {computed} = await import('vue')
+	return {useIncludeSubprojects: () => computed(() => aggregate.value)}
+})
+
 vi.mock('@/stores/base', () => ({
 	useBaseStore: () => ({setHasTasks: vi.fn()}),
 }))
@@ -81,6 +88,7 @@ function dragEndEvent(taskId: string, newIndex: number) {
 
 describe('ProjectList', () => {
 	beforeEach(() => {
+		aggregate.value = false
 		updatePosition.mockReset()
 		updatePosition.mockResolvedValue({data: {position: 200}})
 		// Asymmetric positions: the midpoint between the neighbours must differ from the dragged task's own position.
@@ -128,5 +136,29 @@ describe('ProjectList', () => {
 		await flushPromises()
 
 		expect(updatePosition).not.toHaveBeenCalled()
+	})
+
+	describe('with sub-projects', () => {
+		it('asks for the sub-project tasks and does not sort manually', async () => {
+			aggregate.value = true
+			await mountList()
+
+			const {query} = sdk.projectViewTasksList.mock.lastCall?.[0] as {query: Record<string, unknown>}
+			expect(query.include_subprojects).toBe(true)
+			expect(query.sort_by).toEqual(['created'])
+		})
+
+		it('does not allow dragging tasks', async () => {
+			aggregate.value = true
+			const wrapper = await mountList()
+
+			expect(wrapper.findComponent(draggable).vm.$attrs.disabled).toBe(true)
+		})
+
+		it('allows dragging tasks of a project without sub-projects', async () => {
+			const wrapper = await mountList()
+
+			expect(wrapper.findComponent(draggable).vm.$attrs.disabled).toBe(false)
+		})
 	})
 })

@@ -46,7 +46,7 @@ beforeEach(() => {
 	)
 })
 
-import {useTaskList, buildStoredQuery} from './useTaskList'
+import {useTaskList, buildStoredQuery, withoutManualSort, type SortBy} from './useTaskList'
 import {useViewFiltersStore} from '@/stores/viewFilters'
 
 enableAutoUnmount(afterEach)
@@ -94,7 +94,10 @@ function listRequests() {
 	}))
 }
 
-async function mountTaskList(query: Record<string, string>): Promise<Router> {
+async function mountTaskList(
+	query: Record<string, string>,
+	{includeSubprojects = false, sortByDefault}: {includeSubprojects?: boolean, sortByDefault?: SortBy} = {},
+): Promise<Router> {
 	const router = createRouter({
 		history: createMemoryHistory(),
 		routes: [{path: '/', name: 'home', component: {render: () => null}}],
@@ -104,7 +107,7 @@ async function mountTaskList(query: Record<string, string>): Promise<Router> {
 
 	const TestComponent = defineComponent({
 		setup() {
-			useTaskList(() => 1, () => 1)
+			useTaskList(() => 1, () => 1, sortByDefault, undefined, () => includeSubprojects)
 			return () => h('div')
 		},
 	})
@@ -155,6 +158,54 @@ describe('useTaskList sort handling for relevance ranking', () => {
 		// id always sorts last so other sort columns take precedence.
 		expect(query.sort_by).toEqual(['id'])
 		expect(query.order_by).toEqual(['desc'])
+	})
+})
+
+describe('useTaskList sub-project aggregation', () => {
+	it('sends include_subprojects for an aggregate', async () => {
+		await mountTaskList({}, {includeSubprojects: true})
+
+		expect(lastQuery().include_subprojects).toBe(true)
+	})
+
+	it('omits include_subprojects for a project without sub-projects', async () => {
+		await mountTaskList({})
+
+		expect(lastQuery()).not.toHaveProperty('include_subprojects')
+	})
+
+	it('drops the manual sort of an aggregate and falls back to newest first', async () => {
+		await mountTaskList({}, {includeSubprojects: true, sortByDefault: {position: 'asc'}})
+
+		expect(lastQuery().sort_by).toEqual(['created'])
+		expect(lastQuery().order_by).toEqual(['desc'])
+	})
+
+	it('drops a manual sort restored from the url but keeps the other fields', async () => {
+		await mountTaskList({sort: 'position:asc,priority:desc'}, {includeSubprojects: true})
+
+		expect(lastQuery().sort_by).toEqual(['priority'])
+	})
+
+	it('keeps the manual sort of a project without sub-projects', async () => {
+		await mountTaskList({}, {sortByDefault: {position: 'asc'}})
+
+		expect(lastQuery().sort_by).toEqual(['position'])
+	})
+})
+
+describe('withoutManualSort', () => {
+	it('leaves a sort without position untouched', () => {
+		const sort: SortBy = {due_date: 'asc'}
+		expect(withoutManualSort(sort)).toBe(sort)
+	})
+
+	it('removes position and keeps the remaining fields', () => {
+		expect(withoutManualSort({position: 'asc', id: 'desc'})).toEqual({id: 'desc'})
+	})
+
+	it('falls back to newest first when position was the only field', () => {
+		expect(withoutManualSort({position: 'asc'})).toEqual({created: 'desc'})
 	})
 })
 

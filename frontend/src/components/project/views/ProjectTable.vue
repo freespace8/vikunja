@@ -33,7 +33,10 @@
 							<FancyCheckbox v-model="activeColumns.done">
 								{{ $t('task.attributes.done') }}
 							</FancyCheckbox>
-							<FancyCheckbox v-model="activeColumns.project">
+							<FancyCheckbox
+								v-if="!includeSubprojects"
+								v-model="activeColumns.project"
+							>
 								{{ $t('task.attributes.project') }}
 							</FancyCheckbox>
 							<FancyCheckbox v-model="activeColumns.title">
@@ -123,7 +126,7 @@
 											@click="sort('done', $event)"
 										/>
 									</th>
-									<th v-if="activeColumns.project">
+									<th v-if="showProjectColumn">
 										{{ $t('task.attributes.project') }}
 									</th>
 									<th
@@ -255,7 +258,7 @@
 											variant="small"
 										/>
 									</td>
-									<td v-if="activeColumns.project">
+									<td v-if="showProjectColumn">
 										<RouterLink
 											v-if="projectList.projects[t.project_id]"
 											:to="{ name: 'project.index', params: { projectId: t.project_id } }"
@@ -369,6 +372,7 @@ import {getTaskIdentifier} from '@/helpers/task'
 import { camelCase } from 'change-case'
 import {isSavedFilterProject} from '@/client/queries/projects'
 import {useProjects} from '@/composables/useProjects'
+import {useIncludeSubprojects} from '@/composables/useIncludeSubprojects'
 
 const props = defineProps<{
 	isLoadingProject: boolean,
@@ -407,11 +411,16 @@ const SORT_BY_DEFAULT: SortBy = {
 const activeColumns = useStorage('tableViewColumns', {...ACTIVE_COLUMNS_DEFAULT})
 const sortBy = useStorage<SortBy>('tableViewSortBy', {...SORT_BY_DEFAULT})
 
+const includeSubprojects = useIncludeSubprojects(() => props.projectId)
+// The column setting is stored globally, so a parent project overrides it to keep sub-project tasks distinguishable.
+const showProjectColumn = computed(() => includeSubprojects.value || activeColumns.value.project)
+
 const taskList = useTaskList(
 	() => props.projectId, 
 	() => props.viewId, 
 	sortBy.value,
 	() => ['comment_count', 'is_unread'],
+	() => includeSubprojects.value,
 )
 
 const {

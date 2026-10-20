@@ -62,6 +62,14 @@ const SORT_BY_DEFAULT: SortBy = {
 	id: 'desc',
 }
 
+// Sub-project tasks have no position in this view, so manual order is meaningless for an aggregate.
+export function withoutManualSort(sortBy: SortBy): SortBy {
+	if (!('position' in sortBy)) return sortBy
+	const rest = {...sortBy}
+	delete rest.position
+	return Object.keys(rest).length > 0 ? rest : {created: 'desc'}
+}
+
 interface TaskListQueryState {
 	sort: string | undefined
 	filter: string | undefined
@@ -99,6 +107,7 @@ export function useTaskList(
 	projectViewIdGetter: ComputedGetter<number>,
 	sortByDefault: SortBy = SORT_BY_DEFAULT,
 	expandGetter: ComputedGetter<TaskExpansion> = () => ['subtasks'],
+	includeSubprojectsGetter: ComputedGetter<boolean> = () => false,
 ) {
 	
 	const projectId = computed(() => projectIdGetter())
@@ -121,11 +130,13 @@ export function useTaskList(
 
 	const sortQuery = useRouteQuery('sort')
 
+	const includeSubprojects = computed(() => includeSubprojectsGetter())
+
 	const sortBy = computed<SortBy>({
 		get() {
 			const raw = sortQuery.value as string | undefined
-			if (!raw) return {...sortByDefault}
-			return parseSortQuery(raw, sortByDefault)
+			const current = raw ? parseSortQuery(raw, sortByDefault) : {...sortByDefault}
+			return includeSubprojects.value ? withoutManualSort(current) : current
 		},
 		set(val: SortBy) {
 			sortQuery.value = serializeSortBy(val, sortByDefault) || undefined
@@ -177,6 +188,7 @@ export function useTaskList(
 
 	const allParams = computed(() => {
 		const loadParams = {...params.value}
+		if (includeSubprojects.value) loadParams.include_subprojects = true
 
 		// Relevance ranking only engages when no sort is sent, so omit the default
 		// sort while searching and let an explicit user sort still take precedence.

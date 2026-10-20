@@ -61,7 +61,7 @@ import Popup from '@/components/misc/Popup.vue'
 import Card from '@/components/misc/Card.vue'
 import type {SortBy} from '@/composables/useTaskList'
 
-const props = defineProps<{ modelValue: SortBy }>()
+const props = defineProps<{ modelValue: SortBy, hideManual?: boolean }>()
 const emit = defineEmits<{ 'update:modelValue': [value: SortBy] }>()
 
 const {t} = useI18n({useScope: 'global'})
@@ -103,7 +103,7 @@ const options = computed(() => {
 		{value: 'updated:asc', label: t('sorting.options.updatedAsc')},
 	].sort((a, b) => a.label.localeCompare(b.label))
 
-	return [manual, ...rest]
+	return props.hideManual ? rest : [manual, ...rest]
 })
 
 function applySort(close: () => void) {
