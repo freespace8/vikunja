@@ -22,6 +22,8 @@ vi.mock('@/composables/useIncludeSubprojects', () => ({
 	useIncludeSubprojects: () => includeSubprojects.current,
 }))
 
+import TaskTable from '@/components/tasks/TaskTable.vue'
+import TaskTableColumnPicker from '@/components/tasks/TaskTableColumnPicker.vue'
 import ProjectTable from './ProjectTable.vue'
 
 async function mountTable(query: Record<string, string>) {
@@ -31,7 +33,7 @@ async function mountTable(query: Record<string, string>) {
 	})
 	await router.push({path: '/', query})
 	await router.isReady()
-	shallowMount(ProjectTable, {
+	const wrapper = shallowMount(ProjectTable, {
 		props: {isLoadingProject: false, projectId: 1, viewId: 10},
 		global: {
 			plugins: [
@@ -40,11 +42,14 @@ async function mountTable(query: Record<string, string>) {
 				[VueQueryPlugin, {queryClient: new QueryClient({defaultOptions: {queries: {retry: false}}})}],
 			],
 			mocks: {$t: (key: string) => key},
-			stubs: {ProjectWrapper: {template: '<div><slot name="default"/></div>'}},
+			stubs: {
+				ProjectWrapper: {template: '<div><slot name="header"/><slot name="default"/></div>'},
+				Card: {template: '<div><slot /></div>'},
+			},
 		},
 	})
 	await flushPromises()
-	return router
+	return {router, wrapper}
 }
 
 describe('ProjectTable', () => {
@@ -56,7 +61,7 @@ describe('ProjectTable', () => {
 	})
 
 	it('keeps the sort and page of the url when the project turns out to have sub-projects', async () => {
-		const router = await mountTable({sort: 'title:asc', page: '3'})
+		const {router} = await mountTable({sort: 'title:asc', page: '3'})
 
 		includeSubprojects.current.value = true
 		await flushPromises()
@@ -78,5 +83,43 @@ describe('ProjectTable', () => {
 
 		expect(JSON.parse(localStorage.getItem('tableViewColumnsAggregate') ?? '{}'))
 			.toMatchObject({index: true, labels: false, project: true})
+	})
+
+	it('shows the project table columns and no Project column in a plain project', async () => {
+		includeSubprojects.current = ref<boolean | undefined>(false)
+
+		const {wrapper} = await mountTable({})
+
+		expect(wrapper.findComponent(TaskTable).props('columns')).toEqual({
+			index: true,
+			done: true,
+			project: false,
+			title: true,
+			priority: false,
+			labels: true,
+			assignees: true,
+			dueDate: true,
+			startDate: false,
+			endDate: false,
+			percentDone: false,
+			created: false,
+			updated: false,
+			createdBy: false,
+			doneAt: false,
+			commentCount: false,
+		})
+	})
+
+	it('stores a column change under the key of the table that is shown', async () => {
+		includeSubprojects.current = ref<boolean | undefined>(true)
+		const {wrapper} = await mountTable({})
+		const picker = wrapper.findComponent(TaskTableColumnPicker)
+
+		picker.vm.$emit('update:modelValue', {...picker.props('modelValue'), priority: true})
+		await flushPromises()
+
+		expect(JSON.parse(localStorage.getItem('tableViewColumnsAggregate') ?? '{}')).toMatchObject({priority: true})
+		expect(JSON.parse(localStorage.getItem('tableViewColumns') ?? '{}')).toMatchObject({priority: false})
+		expect(wrapper.findComponent(TaskTable).props('columns')).toMatchObject({priority: true})
 	})
 })
