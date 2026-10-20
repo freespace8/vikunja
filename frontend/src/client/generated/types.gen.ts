@@ -7654,6 +7654,10 @@ export type ProjectTasksListData = {
          * How rich-text fields are exchanged. See the API description.
          */
         format?: 'html' | 'markdown';
+        /**
+         * If true, a project-scoped list also returns the tasks of the project's non-archived sub-projects at any depth. Ignored by the all-projects list, by the buckets endpoint and for link shares.
+         */
+        include_subprojects?: boolean;
     };
     url: '/projects/{project}/tasks';
 };
@@ -8404,6 +8408,10 @@ export type ProjectViewBucketsTasksListData = {
          * How rich-text fields are exchanged. See the API description.
          */
         format?: 'html' | 'markdown';
+        /**
+         * If true, a project-scoped list also returns the tasks of the project's non-archived sub-projects at any depth. Ignored by the all-projects list, by the buckets endpoint and for link shares.
+         */
+        include_subprojects?: boolean;
     };
     url: '/projects/{project}/views/{view}/buckets/tasks';
 };
@@ -8566,6 +8574,10 @@ export type ProjectViewTasksListData = {
          * How rich-text fields are exchanged. See the API description.
          */
         format?: 'html' | 'markdown';
+        /**
+         * If true, a project-scoped list also returns the tasks of the project's non-archived sub-projects at any depth. Ignored by the all-projects list, by the buckets endpoint and for link shares.
+         */
+        include_subprojects?: boolean;
     };
     url: '/projects/{project}/views/{view}/tasks';
 };
@@ -8907,6 +8919,10 @@ export type TasksListData = {
          * How rich-text fields are exchanged. See the API description.
          */
         format?: 'html' | 'markdown';
+        /**
+         * If true, a project-scoped list also returns the tasks of the project's non-archived sub-projects at any depth. Ignored by the all-projects list, by the buckets endpoint and for link shares.
+         */
+        include_subprojects?: boolean;
     };
     url: '/tasks';
 };
