@@ -23,7 +23,6 @@ import (
 
 	"code.vikunja.io/api/pkg/config"
 	"code.vikunja.io/api/pkg/db"
-	"code.vikunja.io/api/pkg/events"
 	"code.vikunja.io/api/pkg/models"
 	webfiles "code.vikunja.io/api/pkg/web/files"
 	"code.vikunja.io/api/pkg/web/handler"
@@ -170,27 +169,7 @@ func taskAttachmentsUpload(ctx context.Context, in *taskAttachmentUploadInput) (
 	s := db.NewSession()
 	defer s.Close()
 
-	formFiles := in.RawBody.Data().Files
-	uploads := make([]*models.AttachmentToUpload, 0, len(formFiles))
-	for _, file := range formFiles {
-		uploads = append(uploads, &models.AttachmentToUpload{Reader: file, Filename: file.Filename, Size: uint64(file.Size)})
-	}
-
-	success, failures, err := models.UploadTaskAttachments(s, a, in.TaskID, uploads)
-	if err != nil {
-		_ = s.Rollback()
-		events.CleanupPending(s)
-		return nil, translateDomainError(err)
-	}
-
-	if err := s.Commit(); err != nil {
-		_ = s.Rollback()
-		events.CleanupPending(s)
-		return nil, translateDomainError(err)
-	}
-	events.DispatchPending(ctx, s)
-
-	return &taskAttachmentUploadBody{Body: webfiles.BuildUploadResult(success, failures)}, nil
+	return uploadFormFiles(ctx, s, a, in.TaskID, in.RawBody.Data().Files)
 }
 
 // taskAttachmentsDownload exists because no handler.Do* fits a file body; bytes

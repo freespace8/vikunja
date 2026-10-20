@@ -19,6 +19,7 @@ package routes
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/getsentry/sentry-go"
 	"github.com/labstack/echo/v5"
@@ -46,6 +47,7 @@ func SentryMiddleware(options SentryOptions) echo.MiddlewareFunc {
 			scope := hub.Scope()
 			scope.SetRequest(c.Request())
 			scope.SetRequestBody(nil) // We don't want to log request bodies
+			redactUploadTicketFromEvents(c, scope)
 
 			// Store hub in context
 			ctx := context.WithValue(c.Request().Context(), sentryHubKey{}, hub)
@@ -66,6 +68,35 @@ func SentryMiddleware(options SentryOptions) echo.MiddlewareFunc {
 			return next(c)
 		}
 	}
+}
+
+// scope.SetRequest makes Sentry build the event's request URL from the raw path, which holds the ticket
+// of an upload link, so events from that route are rewritten before they are sent.
+func redactUploadTicketFromEvents(c *echo.Context, scope *sentry.Scope) {
+	ticket := c.Param("ticket")
+	if c.Path() != mcpUploadsRoute || ticket == "" {
+		return
+	}
+	redact := func(s string) string { return strings.ReplaceAll(s, ticket, "<redacted>") }
+	scope.AddEventProcessor(func(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
+		event.Message = redact(event.Message)
+		for i := range event.Exception {
+			event.Exception[i].Value = redact(event.Exception[i].Value)
+		}
+		if r := event.Request; r != nil {
+			r.URL = redact(r.URL)
+			r.QueryString = redact(r.QueryString)
+			r.Data = redact(r.Data)
+			r.Cookies = redact(r.Cookies)
+			for k, v := range r.Headers {
+				r.Headers[k] = redact(v)
+			}
+			for k, v := range r.Env {
+				r.Env[k] = redact(v)
+			}
+		}
+		return event
+	})
 }
 
 // GetSentryHubFromContext retrieves the Sentry hub from the echo context

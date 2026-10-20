@@ -76,6 +76,8 @@ func TestExposure(t *testing.T) {
 		"shares-read",
 		"migration-csv-migrate",
 		"task-attachments-download",
+		"task-attachments-upload",
+		"mcp-uploads-redeem",
 		"admin-users-list",
 		"bots-create",
 		"health",

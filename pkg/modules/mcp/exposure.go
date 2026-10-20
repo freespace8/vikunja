@@ -83,6 +83,7 @@ var exposedOperations = map[string]toolTier{
 	"task-assignees-list":             typedTool,
 	"task-attachments-delete":         catalogTool,
 	"task-attachments-list":           catalogTool,
+	"task-attachments-upload-link":    typedTool,
 	"task-bucket-update":              catalogTool,
 	"task-comments-create":            typedTool,
 	"task-comments-delete":            typedTool,

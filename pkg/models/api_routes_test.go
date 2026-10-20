@@ -610,3 +610,36 @@ func TestCollectRoutes_CoreKeyCollisionPanics(t *testing.T) {
 		CollectRoutesForAPITokenUsage(echo.RouteInfo{Method: "GET", Path: "/api/v1/projects/background/:project"}, true)
 	})
 }
+
+func TestTaskAttachmentUploadLinkRouteIsGovernedByAttachmentCreate(t *testing.T) {
+	resetAPITokenRoutes(t)
+
+	CollectRoutesForAPITokenUsage(echo.RouteInfo{Method: http.MethodPost, Path: "/api/v2/tasks/:task/attachments"}, true)
+	CollectRoutesForAPITokenUsage(echo.RouteInfo{Method: http.MethodPost, Path: TaskAttachmentUploadLinkRoute}, true)
+
+	// The link route must not show up as a permission of its own, nor displace the upload route.
+	assert.NotContains(t, apiTokenRoutesV2["tasks"], "attachments_upload_link")
+	assert.Equal(t, "/api/v2/tasks/:task/attachments", apiTokenRoutesV2["tasks_attachments"]["create"].Path)
+
+	can := func(permissions APIPermissions, path, method string) bool {
+		return (&APIToken{APIPermissions: permissions}).CanUseRoute(path, method)
+	}
+	create := APIPermissions{"tasks_attachments": {"create"}}
+	assert.True(t, can(create, TaskAttachmentUploadLinkRoute, http.MethodPost))
+	assert.True(t, can(create, "/api/v2/tasks/:task/attachments", http.MethodPost))
+	assert.False(t, can(create, TaskAttachmentUploadLinkRoute, http.MethodGet))
+	readAndDelete := APIPermissions{
+		"tasks_attachments": {
+			"read_all",
+			"delete",
+		},
+	}
+	assert.False(t, can(readAndDelete, TaskAttachmentUploadLinkRoute, http.MethodPost))
+	tasksCreate := APIPermissions{
+		"tasks": {
+			"create",
+			"update",
+		},
+	}
+	assert.False(t, can(tasksCreate, TaskAttachmentUploadLinkRoute, http.MethodPost))
+}

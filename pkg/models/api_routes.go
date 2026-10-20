@@ -59,6 +59,11 @@ func init() {
 	}
 }
 
+// TaskAttachmentUploadLinkRoute is the v2 route that mints a one-time attachment upload link. It has
+// no permission of its own: tasks_attachments.create authorises it, because whoever may upload to a
+// task may also ask for a link to do so.
+const TaskAttachmentUploadLinkRoute = "/api/v2/tasks/:task/attachments/upload-link"
+
 type APITokenRoute map[string]*RouteDetail
 
 type RouteDetail struct {
@@ -265,6 +270,7 @@ func CollectRoutesForAPITokenUsage(route echo.RouteInfo, requiresJWT bool) {
 		routeGroupName == "oauth_authorize" ||
 		routeGroupName == "mcp" ||
 		strings.HasPrefix(routeGroupName, "mcp_") ||
+		route.Path == TaskAttachmentUploadLinkRoute ||
 		strings.HasPrefix(routeGroupName, "user_") {
 		return
 	}
@@ -571,6 +577,11 @@ func tokenAuthorizesRoute(token *APIToken, path, method string) bool {
 				// the same "update" key), so accept it as an alias here.
 				if isV2Path(rd.Path) && rd.Method == http.MethodPut &&
 					method == http.MethodPatch && rd.Path == path {
+					return true
+				}
+				// Minting an upload link is covered by the permission to upload.
+				if group == "tasks_attachments" && p == "create" &&
+					method == http.MethodPost && path == TaskAttachmentUploadLinkRoute {
 					return true
 				}
 				// Two list endpoints share tasks.read_all but only one

@@ -20,6 +20,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -131,6 +132,12 @@ func TestAPITokenPermissionVersionParity(t *testing.T) {
 			{http.MethodPost, "/api/v1/admin/users"},
 			{http.MethodPost, "/api/v2/admin/users"},
 		}},
+		// Minting an upload link is covered by the permission to upload (see TaskAttachmentUploadLinkRoute).
+		{"tasks_attachments", "create", []tokenRoute{
+			{http.MethodPut, "/api/v1/tasks/:task/attachments"},
+			{http.MethodPost, "/api/v2/tasks/:task/attachments"},
+			{http.MethodPost, models.TaskAttachmentUploadLinkRoute},
+		}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.group+"."+tc.perm, func(t *testing.T) {
@@ -146,6 +153,16 @@ func TestAPITokenPermissionVersionParity(t *testing.T) {
 					continue
 				}
 				got := authorized(group, perm)
+				for _, r := range got {
+					if r.Path == models.TaskAttachmentUploadLinkRoute {
+						assert.Truef(t, group == "tasks_attachments" && perm == "create",
+							"%s.%s authorizes the upload-link route; only tasks_attachments.create may", group, perm)
+					}
+				}
+				if group == "tasks_attachments" && perm == "create" {
+					// Pinned in cases above: the one deliberate extra route.
+					got = slices.DeleteFunc(got, func(r tokenRoute) bool { return r.Path == models.TaskAttachmentUploadLinkRoute })
+				}
 				perVersion := map[bool]int{}
 				for _, r := range got {
 					perVersion[strings.HasPrefix(r.Path, "/api/v2/")]++

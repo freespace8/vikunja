@@ -288,6 +288,20 @@ func RegisterRoutes(e *echo.Echo) {
 	collectRoutesForAPITokens(e)
 }
 
+const (
+	mcpUploadsRoute    = apiv2.GroupPrefix + apiv2.MCPUploadsPath + ":ticket"
+	redactedUploadPath = apiv2.GroupPrefix + apiv2.MCPUploadsPath + "<redacted>"
+)
+
+// The ticket in an upload link is its credential, so it must not reach error reports. The access log
+// already records the route template (httpRequestLogger) and so never sees it.
+func redactUploadTicket(c *echo.Context, uri string) string {
+	if c.Path() == mcpUploadsRoute {
+		return redactedUploadPath
+	}
+	return uri
+}
+
 // unauthenticatedAPIPaths contains paths that don't require JWT authentication
 var unauthenticatedAPIPaths = map[string]bool{
 	"/api/v1/register":                       true,
@@ -325,6 +339,9 @@ var unauthenticatedAPIPaths = map[string]bool{
 	"/api/v2/login":                          true,
 	auth.RefreshTokenPathV2:                  true,
 	"/api/v2/auth/openid/:provider/callback": true,
+
+	// One-time attachment upload links: the ticket in the path is the credential.
+	mcpUploadsRoute: true,
 
 	// Testing endpoints authenticate with the testing token via a custom
 	// Authorization header, not a JWT; mounted only when that token is set.
