@@ -10,7 +10,13 @@ description: freespace8 自托管 fork 的维护流程：同步上游、selfhost
 - `origin` = `github.com/freespace8/vikunja`（fork），`upstream` = `github.com/go-vikunja/vikunja`。
 - `main`：上游的镜像，只快进到 `upstream/main`，从不提交自己的代码。
 - `selfhost`：`main` + 我们的改动。部署只从这里构建；新功能在 `.worktrees/<branch>` 里开发完后合并进 `selfhost`。本目录平时检出的就是 `selfhost`。
-- 我们的改动以 `git log --oneline main..selfhost` 为准。目前的核心改动是 MCP 上传附件：MCP 工具 `task_attachments_upload_link` 生成一次性上传链接，再 `curl -F files=@...` 到 `POST /api/v2/mcp/uploads/{ticket}`。
+- 我们的改动以 `git log --oneline main..selfhost` 为准。目前有：
+  - MCP 上传附件：工具 `task_attachments_upload_link` 生成一次性上传链接，再 `curl -F files=@...` 到 `POST /api/v2/mcp/uploads/{ticket}`。
+  - MCP 下载附件：工具 `task_attachments_download_link` 生成一次性下载链接，`GET /api/v2/mcp/downloads/{ticket}`；需要 token 有 `tasks_attachments.read_one`。
+  - 父项目的列表、表格视图汇总所有未归档子项目的任务（v2 任务接口参数 `include_subprojects`）。
+  - Overview / 即将到期页面可切换列表、表格。
+  - 列表、表格显示任务所在的看板列（`expand=buckets`）。
+- 开发进度记在 Vikunja 的「Vikunja」项目（VIK），规则写在项目描述里。
 - 每次部署都用 tag `deployed/YYYYMMDD-<sha>` 记下部署的是哪个提交，它是回滚和迁移比对的基准。首次部署（基于 v2.7.0）的 tag 是 `v2.7.0-mcp-upload`。
 
 ## 已知坑
@@ -53,7 +59,9 @@ docker build --build-arg RELEASE_VERSION=$V -t vikunja-freespace8:$V-selfhost.$(
 4. **验证**：
    - `curl -s http://127.0.0.1:3456/api/v1/info` 的 `version` 是新版本。
    - `docker logs vikunja` 里有 `Ran all migrations successfully`，没有 error。
-   - 用当前 MCP token 调 `/api/v2/mcp`：`tools/list` 里有 `task_attachments_upload_link`，生成链接后 `curl -F` 上传返回 201。
+   - MCP 上传和下载：新建一个临时任务，运行 `python3 -I scripts/prod_dl_check.py <任务 id> <任意本地文件>`。它从 `~/.claude.json` 读 token，不打印 token。要求两个工具都列出、上传 201、下载 200 且字节一致、重复使用 404、容器日志里没有票据。测完删掉临时任务。
+   - 动过任务列表时：`python3 -I scripts/prod_subproject_check.py <有子项目的父项目 id>`（只读）。列表和表格应汇总子项目的任务，看板只返回父项目自己的任务。
+   - 动过前端时，用浏览器打开相关页面看一眼。
 5. **记录**：在部署的提交上打 tag `deployed/YYYYMMDD-<sha>` 并推送。名字不以 `v` 开头，避免被 `git describe` 当成官方版本。
 
 完成标准：新版本在跑，上传实测 201，备份和 tag 都在。
@@ -62,10 +70,12 @@ docker build --build-arg RELEASE_VERSION=$V -t vikunja-freespace8:$V-selfhost.$(
 
 ## 换 MCP token
 
-上传需要附件 Create 权限。在 Vikunja「设置 → MCP」新建 token 时选 FULL ACCESS（Typed 预设没有附件读取权限）。token 写在这四处，全部要换：
+上传需要附件 Create 权限，下载需要附件 Read One 权限。token 建好后不能改权限，只能新建。在 Vikunja「设置 → MCP」新建 token 时选 FULL ACCESS，并确认附件的 Create、Read One 都已勾选。页面在小窗口里，「CREATE TOKEN」按钮可能被遮住，可以用 `page.evaluate` 点击。token 写在这四处，全部要换：
 
 - Claude Code：`~/.claude.json` 顶层 `mcpServers.vikunja`（user scope）。用 `claude mcp remove -s user vikunja` 再 `claude mcp add-json -s user vikunja '<json>'`，不要手改这个文件。
 - Codex：`~/.codex/config.toml` 的 `[mcp_servers.vikunja]` → `http_headers`。
 - pi：`~/.pi/agent/mcp.json`；omp：`~/.omp/agent/mcp.json`（`headers.Authorization`）。
 
-换之前先备份，换完用 `claude mcp get vikunja`、`codex mcp list`、`pi mcp list`、`omp mcp list` 确认都已连上。token 只经由文件或脚本传递，不要打印到输出里。旧 token 确认没人用后，到 Vikunja 里删掉。
+换之前先备份，换完用 `claude mcp get vikunja`、`codex mcp list`、`pi mcp list`、`omp mcp list` 确认都已连上。`omp mcp list` 会启动一次完整的 omp 会话，要几分钟，放后台跑。token 只经由文件或脚本传递，不要打印到输出里。
+
+旧 token 要等用户在当前 Claude Code 会话执行 `/reload-plugins`（或新开会话）之后再删。会话还拿着旧 token，提前删掉会让它连不上 Vikunja。
