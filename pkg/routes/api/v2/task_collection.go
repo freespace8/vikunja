@@ -94,15 +94,42 @@ type taskListFilters struct {
 }
 
 func (in taskListAllInput) filters() taskListFilters {
-	return taskListFilters{in.Q, in.Filter, in.FilterTimezone, in.FilterIncludeNulls, in.SortBy, in.OrderBy, in.Expand, in.IncludeSubprojects}
+	return taskListFilters{
+		Q:                  in.Q,
+		Filter:             in.Filter,
+		FilterTimezone:     in.FilterTimezone,
+		FilterIncludeNulls: in.FilterIncludeNulls,
+		SortBy:             in.SortBy,
+		OrderBy:            in.OrderBy,
+		Expand:             in.Expand,
+		IncludeSubprojects: in.IncludeSubprojects,
+	}
 }
 
 func (in taskListProjectInput) filters() taskListFilters {
-	return taskListFilters{in.Q, in.Filter, in.FilterTimezone, in.FilterIncludeNulls, in.SortBy, in.OrderBy, in.Expand, in.IncludeSubprojects}
+	return taskListFilters{
+		Q:                  in.Q,
+		Filter:             in.Filter,
+		FilterTimezone:     in.FilterTimezone,
+		FilterIncludeNulls: in.FilterIncludeNulls,
+		SortBy:             in.SortBy,
+		OrderBy:            in.OrderBy,
+		Expand:             in.Expand,
+		IncludeSubprojects: in.IncludeSubprojects,
+	}
 }
 
 func (in taskListViewInput) filters() taskListFilters {
-	return taskListFilters{in.Q, in.Filter, in.FilterTimezone, in.FilterIncludeNulls, in.SortBy, in.OrderBy, in.Expand, in.IncludeSubprojects}
+	return taskListFilters{
+		Q:                  in.Q,
+		Filter:             in.Filter,
+		FilterTimezone:     in.FilterTimezone,
+		FilterIncludeNulls: in.FilterIncludeNulls,
+		SortBy:             in.SortBy,
+		OrderBy:            in.OrderBy,
+		Expand:             in.Expand,
+		IncludeSubprojects: in.IncludeSubprojects,
+	}
 }
 
 // collection turns the bound query into a TaskCollection. The search term

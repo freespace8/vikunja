@@ -280,7 +280,7 @@ func TestHumaTaskCollection_IncludeSubprojects(t *testing.T) {
 	childID := createProject("webchild", parentID)
 	grandchildID := createProject("webgrandchild", childID)
 
-	listViewID := func(projectID int64) int64 {
+	viewIDOfKind := func(projectID int64, kind string) int64 {
 		rec := humaRequest(t, e, http.MethodGet, fmt.Sprintf("/api/v2/projects/%d", projectID), "", tok, "")
 		require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 		var project struct {
@@ -291,14 +291,14 @@ func TestHumaTaskCollection_IncludeSubprojects(t *testing.T) {
 		}
 		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &project))
 		for _, view := range project.Views {
-			if view.ViewKind == "list" {
+			if view.ViewKind == kind {
 				return view.ID
 			}
 		}
-		require.FailNow(t, "project has no list view")
+		require.FailNow(t, "project has no view of kind "+kind)
 		return 0
 	}
-	viewID := listViewID(parentID)
+	viewID := viewIDOfKind(parentID, "list")
 	viewTasksPath := fmt.Sprintf("/api/v2/projects/%d/views/%d/tasks", parentID, viewID)
 
 	t.Run("flag returns the project, child and grandchild", func(t *testing.T) {
@@ -324,6 +324,18 @@ func TestHumaTaskCollection_IncludeSubprojects(t *testing.T) {
 			viewTasksPath+"?include_subprojects=true&sort_by=position&order_by=asc", "", tok, "")
 		require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 		assert.Len(t, decodePaginatedTaskItems(t, rec), 3)
+	})
+
+	t.Run("the buckets endpoint ignores the flag", func(t *testing.T) {
+		kanbanViewID := viewIDOfKind(parentID, "kanban")
+		rec := humaRequest(t, e, http.MethodGet,
+			fmt.Sprintf("/api/v2/projects/%d/views/%d/buckets/tasks?include_subprojects=true", parentID, kanbanViewID),
+			"", tok, "")
+		require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+		body := rec.Body.String()
+		assert.Contains(t, body, "webparent task")
+		assert.NotContains(t, body, "webchild task")
+		assert.NotContains(t, body, "webgrandchild task")
 	})
 
 	t.Run("a foreign project stays forbidden", func(t *testing.T) {
