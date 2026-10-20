@@ -289,15 +289,19 @@ func RegisterRoutes(e *echo.Echo) {
 }
 
 const (
-	mcpUploadsRoute    = apiv2.GroupPrefix + apiv2.MCPUploadsPath + ":ticket"
-	redactedUploadPath = apiv2.GroupPrefix + apiv2.MCPUploadsPath + "<redacted>"
+	mcpUploadsRoute   = apiv2.GroupPrefix + apiv2.MCPUploadsPath + ":ticket"
+	mcpDownloadsRoute = apiv2.GroupPrefix + apiv2.MCPDownloadsPath + ":ticket"
 )
 
-// The ticket in an upload link is its credential, so it must not reach error reports. The access log
-// already records the route template (httpRequestLogger) and so never sees it.
-func redactUploadTicket(c *echo.Context, uri string) string {
-	if c.Path() == mcpUploadsRoute {
-		return redactedUploadPath
+func isLinkTicketRoute(c *echo.Context) bool {
+	return c.Path() == mcpUploadsRoute || c.Path() == mcpDownloadsRoute
+}
+
+// The ticket in an upload or download link is its credential, so it must not reach error reports.
+// The access log already records the route template (httpRequestLogger) and so never sees it.
+func redactLinkTicket(c *echo.Context, uri string) string {
+	if isLinkTicketRoute(c) {
+		return strings.Replace(c.Path(), ":ticket", "<redacted>", 1)
 	}
 	return uri
 }
@@ -340,8 +344,9 @@ var unauthenticatedAPIPaths = map[string]bool{
 	auth.RefreshTokenPathV2:                  true,
 	"/api/v2/auth/openid/:provider/callback": true,
 
-	// One-time attachment upload links: the ticket in the path is the credential.
-	mcpUploadsRoute: true,
+	// One-time attachment upload and download links: the ticket in the path is the credential.
+	mcpUploadsRoute:   true,
+	mcpDownloadsRoute: true,
 
 	// Testing endpoints authenticate with the testing token via a custom
 	// Authorization header, not a JWT; mounted only when that token is set.

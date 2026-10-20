@@ -611,35 +611,93 @@ func TestCollectRoutes_CoreKeyCollisionPanics(t *testing.T) {
 	})
 }
 
-func TestTaskAttachmentUploadLinkRouteIsGovernedByAttachmentCreate(t *testing.T) {
-	resetAPITokenRoutes(t)
-
-	CollectRoutesForAPITokenUsage(echo.RouteInfo{Method: http.MethodPost, Path: "/api/v2/tasks/:task/attachments"}, true)
-	CollectRoutesForAPITokenUsage(echo.RouteInfo{Method: http.MethodPost, Path: TaskAttachmentUploadLinkRoute}, true)
-
-	// The link route must not show up as a permission of its own, nor displace the upload route.
-	assert.NotContains(t, apiTokenRoutesV2["tasks"], "attachments_upload_link")
-	assert.Equal(t, "/api/v2/tasks/:task/attachments", apiTokenRoutesV2["tasks_attachments"]["create"].Path)
-
-	can := func(permissions APIPermissions, path, method string) bool {
-		return (&APIToken{APIPermissions: permissions}).CanUseRoute(path, method)
-	}
-	create := APIPermissions{"tasks_attachments": {"create"}}
-	assert.True(t, can(create, TaskAttachmentUploadLinkRoute, http.MethodPost))
-	assert.True(t, can(create, "/api/v2/tasks/:task/attachments", http.MethodPost))
-	assert.False(t, can(create, TaskAttachmentUploadLinkRoute, http.MethodGet))
-	readAndDelete := APIPermissions{
-		"tasks_attachments": {
-			"read_all",
-			"delete",
+func TestTaskAttachmentLinkRoutesAreGovernedByTheAttachmentPermission(t *testing.T) {
+	tests := []struct {
+		name       string
+		route      string
+		permission string
+		// The route the permission itself covers.
+		base       string
+		baseMethod string
+		// Permissions that must not cover the link route.
+		others []APIPermissions
+	}{
+		{
+			name:       "upload",
+			route:      TaskAttachmentUploadLinkRoute,
+			permission: "create",
+			base:       "/api/v2/tasks/:task/attachments",
+			baseMethod: http.MethodPost,
+			others: []APIPermissions{
+				{
+					"tasks_attachments": {
+						"read_all",
+						"read_one",
+						"delete",
+					},
+				},
+				{
+					"tasks": {
+						"create",
+						"update",
+					},
+				},
+			},
+		},
+		{
+			name:       "download",
+			route:      TaskAttachmentDownloadLinkRoute,
+			permission: "read_one",
+			base:       "/api/v2/tasks/:task/attachments/:attachment",
+			baseMethod: http.MethodGet,
+			others: []APIPermissions{
+				{
+					"tasks_attachments": {
+						"read_all",
+						"create",
+						"delete",
+					},
+				},
+				{
+					"tasks": {
+						"read_one",
+						"read_all",
+					},
+				},
+			},
 		},
 	}
-	assert.False(t, can(readAndDelete, TaskAttachmentUploadLinkRoute, http.MethodPost))
-	tasksCreate := APIPermissions{
-		"tasks": {
-			"create",
-			"update",
-		},
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resetAPITokenRoutes(t)
+
+			CollectRoutesForAPITokenUsage(echo.RouteInfo{Method: tc.baseMethod, Path: tc.base}, true)
+			CollectRoutesForAPITokenUsage(echo.RouteInfo{Method: http.MethodPost, Path: tc.route}, true)
+
+			// The link route must not show up as a permission of its own, nor displace the route it is tied to.
+			for group, routes := range apiTokenRoutesV2 {
+				for permission, detail := range routes {
+					assert.NotEqual(t, tc.route, detail.Path, "%s.%s", group, permission)
+				}
+			}
+			assert.Equal(t, tc.base, apiTokenRoutesV2["tasks_attachments"][tc.permission].Path)
+
+			can := func(permissions APIPermissions, path, method string) bool {
+				return (&APIToken{APIPermissions: permissions}).CanUseRoute(path, method)
+			}
+			granted := APIPermissions{"tasks_attachments": {tc.permission}}
+			assert.True(t, can(granted, tc.route, http.MethodPost))
+			assert.True(t, can(granted, tc.base, tc.baseMethod))
+			assert.False(t, can(granted, tc.route, http.MethodGet))
+			for _, other := range tc.others {
+				assert.False(t, can(other, tc.route, http.MethodPost), "%v", other)
+			}
+		})
 	}
-	assert.False(t, can(tasksCreate, TaskAttachmentUploadLinkRoute, http.MethodPost))
+
+	// Each permission covers its own link route only.
+	create := &APIToken{APIPermissions: APIPermissions{"tasks_attachments": {"create"}}}
+	readOne := &APIToken{APIPermissions: APIPermissions{"tasks_attachments": {"read_one"}}}
+	assert.False(t, create.CanUseRoute(TaskAttachmentDownloadLinkRoute, http.MethodPost))
+	assert.False(t, readOne.CanUseRoute(TaskAttachmentUploadLinkRoute, http.MethodPost))
 }

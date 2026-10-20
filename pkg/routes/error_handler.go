@@ -141,8 +141,8 @@ func reportToSentry(err error, c *echo.Context) {
 	hub := GetSentryHubFromContext(c)
 	if hub != nil {
 		hub.WithScope(func(scope *sentry.Scope) {
-			redactUploadTicketFromEvents(c, scope)
-			scope.SetContext("request", sentry.Context{"url": redactUploadTicket(c, c.Request().URL.String())})
+			redactLinkTicketFromEvents(c, scope)
+			scope.SetContext("request", sentry.Context{"url": redactLinkTicket(c, c.Request().URL.String())})
 			errorreport.Apply(scope, err)
 			hub.CaptureException(err)
 		})

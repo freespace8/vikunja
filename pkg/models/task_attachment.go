@@ -172,6 +172,13 @@ func GetTaskAttachmentForDownload(a web.Auth, taskID, attachmentID int64) (*file
 	return ta.File, nil
 }
 
+// GetTaskAttachmentInfo returns the attachment with its file metadata, without opening the file.
+// Access is checked like for a download: a missing attachment or one of another task is
+// ErrTaskAttachmentDoesNotExist, denied access is ErrGenericForbidden.
+func GetTaskAttachmentInfo(a web.Auth, taskID, attachmentID int64) (*TaskAttachment, error) {
+	return readTaskAttachment(a, taskID, attachmentID)
+}
+
 // GetTaskAttachmentPreview returns ErrTaskAttachmentNotPreviewable when no preview can be made of the attachment.
 // Returns ErrGenericForbidden on denied access.
 func GetTaskAttachmentPreview(ctx context.Context, a web.Auth, taskID, attachmentID int64, previewSize PreviewSize) (*TaskAttachmentPreview, error) {

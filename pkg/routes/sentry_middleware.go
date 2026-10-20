@@ -47,7 +47,7 @@ func SentryMiddleware(options SentryOptions) echo.MiddlewareFunc {
 			scope := hub.Scope()
 			scope.SetRequest(c.Request())
 			scope.SetRequestBody(nil) // We don't want to log request bodies
-			redactUploadTicketFromEvents(c, scope)
+			redactLinkTicketFromEvents(c, scope)
 
 			// Store hub in context
 			ctx := context.WithValue(c.Request().Context(), sentryHubKey{}, hub)
@@ -71,10 +71,10 @@ func SentryMiddleware(options SentryOptions) echo.MiddlewareFunc {
 }
 
 // scope.SetRequest makes Sentry build the event's request URL from the raw path, which holds the ticket
-// of an upload link, so events from that route are rewritten before they are sent.
-func redactUploadTicketFromEvents(c *echo.Context, scope *sentry.Scope) {
+// of an upload or download link, so events from those routes are rewritten before they are sent.
+func redactLinkTicketFromEvents(c *echo.Context, scope *sentry.Scope) {
 	ticket := c.Param("ticket")
-	if c.Path() != mcpUploadsRoute || ticket == "" {
+	if !isLinkTicketRoute(c) || ticket == "" {
 		return
 	}
 	redact := func(s string) string { return strings.ReplaceAll(s, ticket, "<redacted>") }
