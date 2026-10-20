@@ -78,6 +78,7 @@ func TestExposure(t *testing.T) {
 		"task-attachments-download",
 		"task-attachments-upload",
 		"mcp-uploads-redeem",
+		"mcp-downloads-redeem",
 		"admin-users-list",
 		"bots-create",
 		"health",

@@ -132,11 +132,16 @@ func TestAPITokenPermissionVersionParity(t *testing.T) {
 			{http.MethodPost, "/api/v1/admin/users"},
 			{http.MethodPost, "/api/v2/admin/users"},
 		}},
-		// Minting an upload link is covered by the permission to upload (see TaskAttachmentUploadLinkRoute).
+		// Minting an attachment link is covered by the permission to upload or download (see TaskAttachmentUploadLinkRoute).
 		{"tasks_attachments", "create", []tokenRoute{
 			{http.MethodPut, "/api/v1/tasks/:task/attachments"},
 			{http.MethodPost, "/api/v2/tasks/:task/attachments"},
 			{http.MethodPost, models.TaskAttachmentUploadLinkRoute},
+		}},
+		{"tasks_attachments", "read_one", []tokenRoute{
+			{http.MethodGet, "/api/v1/tasks/:task/attachments/:attachment"},
+			{http.MethodGet, "/api/v2/tasks/:task/attachments/:attachment"},
+			{http.MethodPost, models.TaskAttachmentDownloadLinkRoute},
 		}},
 	}
 	for _, tc := range cases {
@@ -153,16 +158,21 @@ func TestAPITokenPermissionVersionParity(t *testing.T) {
 					continue
 				}
 				got := authorized(group, perm)
+				// The link routes are the deliberate extra routes of one permission each, pinned in cases above.
+				linkPermissions := map[string]string{
+					models.TaskAttachmentUploadLinkRoute:   "tasks_attachments.create",
+					models.TaskAttachmentDownloadLinkRoute: "tasks_attachments.read_one",
+				}
 				for _, r := range got {
-					if r.Path == models.TaskAttachmentUploadLinkRoute {
-						assert.Truef(t, group == "tasks_attachments" && perm == "create",
-							"%s.%s authorizes the upload-link route; only tasks_attachments.create may", group, perm)
+					if want, isLink := linkPermissions[r.Path]; isLink {
+						assert.Equalf(t, want, group+"."+perm,
+							"%s.%s authorizes %s; only %s may", group, perm, r.Path, want)
 					}
 				}
-				if group == "tasks_attachments" && perm == "create" {
-					// Pinned in cases above: the one deliberate extra route.
-					got = slices.DeleteFunc(got, func(r tokenRoute) bool { return r.Path == models.TaskAttachmentUploadLinkRoute })
-				}
+				got = slices.DeleteFunc(got, func(r tokenRoute) bool {
+					_, isLink := linkPermissions[r.Path]
+					return isLink
+				})
 				perVersion := map[bool]int{}
 				for _, r := range got {
 					perVersion[strings.HasPrefix(r.Path, "/api/v2/")]++

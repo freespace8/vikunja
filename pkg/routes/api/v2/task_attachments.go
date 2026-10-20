@@ -23,6 +23,7 @@ import (
 
 	"code.vikunja.io/api/pkg/config"
 	"code.vikunja.io/api/pkg/db"
+	"code.vikunja.io/api/pkg/files"
 	"code.vikunja.io/api/pkg/models"
 	webfiles "code.vikunja.io/api/pkg/web/files"
 	"code.vikunja.io/api/pkg/web/handler"
@@ -84,19 +85,7 @@ func RegisterTaskAttachmentRoutes(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/tasks/{task}/attachments/{attachment}",
 		Tags:        tags,
-		// Spell out the binary response; a bare []byte Body would otherwise be
-		// modeled as a base64 JSON string instead of binary file data.
-		Responses: map[string]*huma.Response{
-			"default": defaultErrorResponse(api),
-			"200": {
-				Description: "The attachment file bytes. The Content-Type header carries the file's mime type.",
-				Content: map[string]*huma.MediaType{
-					"application/octet-stream": {
-						Schema: &huma.Schema{Type: huma.TypeString, Format: "binary"},
-					},
-				},
-			},
-		},
+		Responses:   attachmentBytesResponses(api),
 	}, taskAttachmentsDownload)
 
 	Register(api, huma.Operation{
@@ -137,6 +126,22 @@ func RegisterTaskAttachmentRoutes(api huma.API) {
 }
 
 func init() { AddRouteRegistrar(RegisterTaskAttachmentRoutes) }
+
+// Spell out the binary response; a bare []byte Body would otherwise be
+// modeled as a base64 JSON string instead of binary file data.
+func attachmentBytesResponses(api huma.API) map[string]*huma.Response {
+	return map[string]*huma.Response{
+		"default": defaultErrorResponse(api),
+		"200": {
+			Description: "The attachment file bytes. The Content-Type header carries the file's mime type.",
+			Content: map[string]*huma.MediaType{
+				"application/octet-stream": {
+					Schema: &huma.Schema{Type: huma.TypeString, Format: "binary"},
+				},
+			},
+		},
+	}
+}
 
 func taskAttachmentsList(ctx context.Context, in *struct {
 	TaskID int64 `path:"task" doc:"The id of the task whose attachments to list."`
@@ -188,12 +193,16 @@ func taskAttachmentsDownload(ctx context.Context, in *struct {
 		return nil, translateDomainError(err)
 	}
 
-	// Reader is independent of the session; stays valid for the StreamResponse callback.
+	return streamAttachmentFile(file), nil
+}
+
+// Reader is independent of the session; stays valid for the StreamResponse callback.
+func streamAttachmentFile(file *files.File) *huma.StreamResponse {
 	return &huma.StreamResponse{Body: func(hctx huma.Context) {
 		defer func() { _ = file.File.Close() }()
 		c := humaecho.Unwrap(hctx)
 		webfiles.WriteFileDownload((*c).Response(), (*c).Request(), file)
-	}}, nil
+	}}
 }
 
 func taskAttachmentsPreview(ctx context.Context, in *struct {

@@ -2271,6 +2271,44 @@ export type TaskAttachment = {
     readonly task_id?: number;
 };
 
+export type TaskAttachmentDownloadLink = {
+    /**
+     * A URL to the JSON Schema for this object.
+     */
+    readonly $schema?: string;
+    /**
+     * A ready-to-run curl command that saves the file to the current directory as vikunja-<attachment id>-<name>, so it cannot overwrite an unrelated local file.
+     */
+    readonly curl_example?: string;
+    /**
+     * Single-use URL to fetch the file from. The URL itself is the credential: any Authorization header is ignored.
+     */
+    readonly download_url?: string;
+    /**
+     * When the link expires, 10 minutes after it was created.
+     */
+    readonly expires_at?: string;
+    /**
+     * What the link downloads.
+     */
+    readonly file?: TaskAttachmentDownloadLinkFile;
+};
+
+export type TaskAttachmentDownloadLinkFile = {
+    /**
+     * The detected mime type of the attachment.
+     */
+    readonly mime?: string;
+    /**
+     * The original name of the attachment.
+     */
+    readonly name?: string;
+    /**
+     * The size of the attachment in bytes.
+     */
+    readonly size_bytes?: number;
+};
+
 export type TaskAttachmentUploadLink = {
     /**
      * A URL to the JSON Schema for this object.
@@ -6267,6 +6305,36 @@ export type AuthLogoutResponses = {
 
 export type AuthLogoutResponse = AuthLogoutResponses[keyof AuthLogoutResponses];
 
+export type McpDownloadsRedeemData = {
+    body?: never;
+    path: {
+        /**
+         * The one-time ticket from a download link.
+         */
+        ticket: string;
+    };
+    query?: never;
+    url: '/mcp/downloads/{ticket}';
+};
+
+export type McpDownloadsRedeemErrors = {
+    /**
+     * Error
+     */
+    default: VikunjaErrorModel;
+};
+
+export type McpDownloadsRedeemError = McpDownloadsRedeemErrors[keyof McpDownloadsRedeemErrors];
+
+export type McpDownloadsRedeemResponses = {
+    /**
+     * The attachment file bytes. The Content-Type header carries the file's mime type.
+     */
+    200: Blob | File;
+};
+
+export type McpDownloadsRedeemResponse = McpDownloadsRedeemResponses[keyof McpDownloadsRedeemResponses];
+
 export type McpInfoData = {
     body?: never;
     path?: never;
@@ -9452,6 +9520,40 @@ export type TaskAttachmentsDownloadResponses = {
 };
 
 export type TaskAttachmentsDownloadResponse = TaskAttachmentsDownloadResponses[keyof TaskAttachmentsDownloadResponses];
+
+export type TaskAttachmentsDownloadLinkData = {
+    body?: never;
+    path: {
+        /**
+         * The id of the task the attachment belongs to.
+         */
+        task: number;
+        /**
+         * The id of the attachment to create a download link for.
+         */
+        attachment: number;
+    };
+    query?: never;
+    url: '/tasks/{task}/attachments/{attachment}/download-link';
+};
+
+export type TaskAttachmentsDownloadLinkErrors = {
+    /**
+     * Error
+     */
+    default: VikunjaErrorModel;
+};
+
+export type TaskAttachmentsDownloadLinkError = TaskAttachmentsDownloadLinkErrors[keyof TaskAttachmentsDownloadLinkErrors];
+
+export type TaskAttachmentsDownloadLinkResponses = {
+    /**
+     * Created
+     */
+    201: TaskAttachmentDownloadLink;
+};
+
+export type TaskAttachmentsDownloadLinkResponse = TaskAttachmentsDownloadLinkResponses[keyof TaskAttachmentsDownloadLinkResponses];
 
 export type TaskAttachmentsPreviewData = {
     body?: never;

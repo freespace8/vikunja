@@ -59,10 +59,19 @@ func init() {
 	}
 }
 
-// TaskAttachmentUploadLinkRoute is the v2 route that mints a one-time attachment upload link. It has
-// no permission of its own: tasks_attachments.create authorises it, because whoever may upload to a
-// task may also ask for a link to do so.
-const TaskAttachmentUploadLinkRoute = "/api/v2/tasks/:task/attachments/upload-link"
+// Routes that mint a one-time attachment link have no permission of their own: the permission
+// to upload or download the attachment itself authorises them, because whoever may do that may
+// also ask for a link to do so.
+const (
+	TaskAttachmentUploadLinkRoute   = "/api/v2/tasks/:task/attachments/upload-link"
+	TaskAttachmentDownloadLinkRoute = "/api/v2/tasks/:task/attachments/:attachment/download-link"
+)
+
+// attachmentLinkRoutes maps each minting route to the one permission, as "group.permission", that authorises it.
+var attachmentLinkRoutes = map[string]string{
+	TaskAttachmentUploadLinkRoute:   "tasks_attachments.create",
+	TaskAttachmentDownloadLinkRoute: "tasks_attachments.read_one",
+}
 
 type APITokenRoute map[string]*RouteDetail
 
@@ -270,7 +279,7 @@ func CollectRoutesForAPITokenUsage(route echo.RouteInfo, requiresJWT bool) {
 		routeGroupName == "oauth_authorize" ||
 		routeGroupName == "mcp" ||
 		strings.HasPrefix(routeGroupName, "mcp_") ||
-		route.Path == TaskAttachmentUploadLinkRoute ||
+		attachmentLinkRoutes[route.Path] != "" ||
 		strings.HasPrefix(routeGroupName, "user_") {
 		return
 	}
@@ -579,9 +588,8 @@ func tokenAuthorizesRoute(token *APIToken, path, method string) bool {
 					method == http.MethodPatch && rd.Path == path {
 					return true
 				}
-				// Minting an upload link is covered by the permission to upload.
-				if group == "tasks_attachments" && p == "create" &&
-					method == http.MethodPost && path == TaskAttachmentUploadLinkRoute {
+				// Minting an attachment link is covered by the permission it grants.
+				if method == http.MethodPost && attachmentLinkRoutes[path] == group+"."+p {
 					return true
 				}
 				// Two list endpoints share tasks.read_all but only one
