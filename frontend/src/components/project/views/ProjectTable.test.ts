@@ -110,6 +110,17 @@ describe('ProjectTable', () => {
 		})
 	})
 
+	it('puts the sort chosen in the table into the url', async () => {
+		const {router, wrapper} = await mountTable({})
+		const table = wrapper.findComponent(TaskTable)
+
+		table.vm.$emit('update:sortBy', {title: 'desc'})
+		table.vm.$emit('sorted')
+		await flushPromises()
+
+		expect(router.currentRoute.value.query.sort).toBe('title:desc')
+	})
+
 	it('stores a column change under the key of the table that is shown', async () => {
 		includeSubprojects.current = ref<boolean | undefined>(true)
 		const {wrapper} = await mountTable({})

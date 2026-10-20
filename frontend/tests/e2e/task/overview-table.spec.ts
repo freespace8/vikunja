@@ -6,13 +6,32 @@ import {createDefaultViews} from '../project/prepareProjects'
 const DAY = 24 * 60 * 60 * 1000
 
 async function seedOverview() {
-	const project = (await ProjectFactory.create(1, {id: 1, title: 'Overview Table Project'}))[0]
+	const project = (await ProjectFactory.create(1, {
+		id: 1,
+		title: 'Overview Table Project',
+	}))[0]
 	await createDefaultViews(project.id)
 	const dueSoon = new Date(Date.now() + DAY).toISOString()
 	const overdue = new Date(Date.now() - 3 * DAY).toISOString()
-	await TaskFactory.create(1, {id: 1, project_id: project.id, title: 'Open task', due_date: dueSoon}, false)
-	await TaskFactory.create(1, {id: 2, project_id: project.id, title: 'Done task', due_date: dueSoon, done: true}, false)
-	await TaskFactory.create(1, {id: 3, project_id: project.id, title: 'Overdue task', due_date: overdue}, false)
+	await TaskFactory.create(1, {
+		id: 1,
+		project_id: project.id,
+		title: 'Open task',
+		due_date: dueSoon,
+	}, false)
+	await TaskFactory.create(1, {
+		id: 2,
+		project_id: project.id,
+		title: 'Done task',
+		due_date: dueSoon,
+		done: true,
+	}, false)
+	await TaskFactory.create(1, {
+		id: 3,
+		project_id: project.id,
+		title: 'Overdue task',
+		due_date: overdue,
+	}, false)
 	return project
 }
 

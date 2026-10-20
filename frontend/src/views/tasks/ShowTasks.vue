@@ -75,7 +75,7 @@
 			<div
 				class="view-mode-switch"
 				role="group"
-				:aria-label="$t('project.views')"
+				:aria-label="$t('menu.views')"
 			>
 				<XButton
 					v-for="mode in VIEW_MODES"
@@ -142,6 +142,7 @@
 import {computed, ref, watch, watchEffect} from 'vue'
 import {useRoute, useRouter} from 'vue-router'
 import {useStorage} from '@vueuse/core'
+import {hashKey, type QueryKey} from '@tanstack/vue-query'
 import {useI18n} from 'vue-i18n'
 
 import {formatDate} from '@/helpers/time/formatDate'
@@ -162,7 +163,7 @@ import LlamaCool from '@/assets/llama-cool.svg?component'
 import {useAuthStore} from '@/stores/auth'
 import {useProjects} from '@/composables/useProjects'
 import {useLabels} from '@/composables/useLabels'
-import type {TaskFilterParams} from '@/client/queries/tasks'
+import {taskKeys, type TaskFilterParams} from '@/client/queries/tasks'
 import type {SortBy} from '@/composables/useTaskList'
 import {useTasks} from '@/composables/useTasks'
 import {useDelayedLoading} from '@/composables/useDelayedLoading'
@@ -198,9 +199,18 @@ const {t} = useI18n({useScope: 'global'})
 
 type ViewMode = 'list' | 'table'
 
-const VIEW_MODES: {value: ViewMode, label: string}[] = [
-	{value: 'list', label: 'project.list.title'},
-	{value: 'table', label: 'project.table.title'},
+const VIEW_MODES: {
+	value: ViewMode,
+	label: string,
+}[] = [
+	{
+		value: 'list',
+		label: 'project.list.title',
+	},
+	{
+		value: 'table',
+		label: 'project.table.title',
+	},
 ]
 
 const viewMode = useStorage<ViewMode>('overviewViewMode', 'list')
@@ -210,9 +220,32 @@ const tableColumns = useStorage('overviewTableColumns', {...ACTIVE_COLUMNS_DEFAU
 const tableSortBy = useStorage<SortBy>('overviewTableSortBy', {})
 
 const taskScope = ref<TaskScope | null>(null)
+// Only a new sort keeps the previous tasks, so the table and its sort buttons stay mounted while it reloads.
+// A changed filter must not show the tasks of the previous one.
+function withoutSort(key: QueryKey): QueryKey {
+	const params = taskKeys.paramsOf(key)
+	if (!params) {
+		return key
+	}
+	const filterParams = {...params}
+	delete filterParams.sort_by
+	delete filterParams.order_by
+	return [...key.slice(0, 4), filterParams, ...key.slice(5)]
+}
+
 const taskQuery = useTasks(
 	() => taskScope.value ?? {},
-	{enabled: () => authStore.authenticated && taskScope.value !== null},
+	{
+		enabled: () => authStore.authenticated && taskScope.value !== null,
+		placeholderData: (previousData, previousQuery) => {
+			if (!previousQuery || !taskScope.value) {
+				return undefined
+			}
+			const sameFilters = hashKey(withoutSort(previousQuery.queryKey))
+				=== hashKey(withoutSort(taskKeys.list(taskScope.value)))
+			return sameFilters ? previousData : undefined
+		},
+	},
 )
 const tasks = taskQuery.tasks
 const showNothingToDo = ref<boolean>(false)
@@ -306,7 +339,10 @@ const sortParams = computed<Pick<TaskFilterParams, 'sort_by' | 'order_by'>>(() =
 	const sortBy = isTableView.value ? sortByActiveColumns(tableSortBy.value, tableColumns.value) : {}
 	const fields = (Object.keys(sortBy) as (keyof SortBy)[]).filter(field => sortBy[field] !== 'none')
 	if (fields.length === 0) {
-		return {sort_by: ['due_date', 'id'], order_by: ['asc', 'desc']}
+		return {
+			sort_by: ['due_date', 'id'],
+			order_by: ['asc', 'desc'],
+		}
 	}
 
 	return {

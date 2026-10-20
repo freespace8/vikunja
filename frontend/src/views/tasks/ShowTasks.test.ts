@@ -7,7 +7,10 @@ import {createMemoryHistory, createRouter} from 'vue-router'
 
 const sdk = vi.hoisted(() => ({
 	tasksList: vi.fn(async (_request: {query: Record<string, unknown>}) => ({
-		data: {items: [] as unknown[], total_pages: 1},
+		data: {
+			items: [] as unknown[],
+			total_pages: 1,
+		},
 	})),
 }))
 
@@ -27,6 +30,8 @@ vi.mock('vue-i18n', async importOriginal => ({
 	useI18n: () => ({t: (key: string) => key}),
 }))
 
+import {createI18n} from 'vue-i18n'
+import en from '@/i18n/lang/en.json'
 import TaskTable from '@/components/tasks/TaskTable.vue'
 import TaskTableColumnPicker from '@/components/tasks/TaskTableColumnPicker.vue'
 import ShowTasks from './ShowTasks.vue'
@@ -126,7 +131,12 @@ describe('Overview view mode', () => {
 	beforeEach(() => {
 		localStorage.clear()
 		sdk.tasksList.mockReset()
-		sdk.tasksList.mockResolvedValue({data: {items: [task], total_pages: 1}})
+		sdk.tasksList.mockResolvedValue({
+			data: {
+				items: [task],
+				total_pages: 1,
+			},
+		})
 	})
 
 	async function showTable() {
@@ -146,10 +156,9 @@ describe('Overview view mode', () => {
 		expect(lastQuery().order_by).toEqual(['asc', 'desc'])
 	})
 
-	it('switches to the table, remembers it and keeps the filters', async () => {
+	it('switches to the table and remembers it without another request', async () => {
 		const wrapper = await mountUpcoming()
 		await flushPromises()
-		const filter = lastQuery().filter
 
 		await wrapper.findAll('.view-mode-switch button')[1].trigger('click')
 		await flushPromises()
@@ -158,7 +167,24 @@ describe('Overview view mode', () => {
 		expect(wrapper.findComponent(TaskTable).exists()).toBe(true)
 		expect(wrapper.find('.tasks').exists()).toBe(false)
 		expect(sdk.tasksList).toHaveBeenCalledTimes(1)
-		expect(lastQuery().filter).toBe(filter)
+	})
+
+	it('labels the switch with existing translations', async () => {
+		const wrapper = await mountUpcoming()
+		const keys = [
+			wrapper.find('.view-mode-switch').attributes('aria-label') ?? '',
+			...wrapper.findAll('.view-mode-switch button').map(button => button.text()),
+		]
+
+		const {t} = createI18n({
+			legacy: false,
+			locale: 'en',
+			messages: {en},
+		}).global
+		for (const key of keys) {
+			// A key of a message group is returned unchanged.
+			expect(t(key), key).not.toBe(key)
+		}
 	})
 
 	it('switches back to the list', async () => {
@@ -174,15 +200,43 @@ describe('Overview view mode', () => {
 	it('shows the Project column of the table by default', async () => {
 		const wrapper = await showTable()
 
-		expect(wrapper.findComponent(TaskTable).props('columns')).toMatchObject({project: true, title: true})
+		expect(wrapper.findComponent(TaskTable).props('columns')).toMatchObject({
+			project: true,
+			title: true,
+		})
 		expect(wrapper.findComponent(TaskTableColumnPicker).exists()).toBe(true)
+	})
+
+	it('keeps the table mounted while a new sort loads', async () => {
+		const wrapper = await showTable()
+		sdk.tasksList.mockReturnValue(new Promise(() => {}))
+
+		wrapper.findComponent(TaskTable).vm.$emit('update:sortBy', {title: 'desc'})
+		await flushPromises()
+
+		expect(sdk.tasksList).toHaveBeenCalledTimes(2)
+		expect(wrapper.findComponent(TaskTable).exists()).toBe(true)
+	})
+
+	it('does not show the tasks of the previous filter while a new one loads', async () => {
+		const wrapper = await showTable()
+		sdk.tasksList.mockReturnValue(new Promise(() => {}))
+
+		await wrapper.setProps({showOverdue: true})
+		await flushPromises()
+
+		expect(sdk.tasksList).toHaveBeenCalledTimes(2)
+		expect(wrapper.findComponent(TaskTable).exists()).toBe(false)
 	})
 
 	it('remembers the column choice under its own key', async () => {
 		const wrapper = await showTable()
 		const picker = wrapper.findComponent(TaskTableColumnPicker)
 
-		picker.vm.$emit('update:modelValue', {...picker.props('modelValue'), project: false})
+		picker.vm.$emit('update:modelValue', {
+			...picker.props('modelValue'),
+			project: false,
+		})
 		await flushPromises()
 
 		expect(JSON.parse(localStorage.getItem('overviewTableColumns') ?? '{}')).toMatchObject({project: false})

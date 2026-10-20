@@ -47,8 +47,14 @@ const emit = defineEmits<{
 	'update:modelValue': [value: TaskTableColumns],
 }>()
 
-const PICKER_COLUMNS: {key: keyof TaskTableColumns, label?: string}[] = [
-	{key: 'index', label: '#'},
+const PICKER_COLUMNS: {
+	key: keyof TaskTableColumns,
+	label?: string,
+}[] = [
+	{
+		key: 'index',
+		label: '#',
+	},
 	{key: 'done'},
 	{key: 'project'},
 	{key: 'title'},
