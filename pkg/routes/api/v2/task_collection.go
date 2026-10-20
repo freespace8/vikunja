@@ -62,6 +62,7 @@ type TaskListQueryParams struct {
 	OrderBy            []string `query:"order_by,explode" doc:"Sort order per sort_by field, asc or desc. Repeatable; defaults to asc."`
 	Expand             []string `query:"expand,explode" enum:"subtasks,buckets,reactions,comments,comment_count,time_entries_count,is_unread" doc:"Embed extra, more expensive data per task. Repeatable."`
 	Format             string   `query:"format" enum:"html,markdown" doc:"How rich-text fields are exchanged. See the API description."`
+	IncludeSubprojects bool     `query:"include_subprojects" doc:"If true, a project-scoped list also returns the tasks of the project's non-archived sub-projects at any depth. Ignored by the all-projects list, by the buckets endpoint and for link shares."`
 }
 
 type taskListAllInput struct {
@@ -89,18 +90,19 @@ type taskListFilters struct {
 	SortBy             []string
 	OrderBy            []string
 	Expand             []string
+	IncludeSubprojects bool
 }
 
 func (in taskListAllInput) filters() taskListFilters {
-	return taskListFilters{in.Q, in.Filter, in.FilterTimezone, in.FilterIncludeNulls, in.SortBy, in.OrderBy, in.Expand}
+	return taskListFilters{in.Q, in.Filter, in.FilterTimezone, in.FilterIncludeNulls, in.SortBy, in.OrderBy, in.Expand, in.IncludeSubprojects}
 }
 
 func (in taskListProjectInput) filters() taskListFilters {
-	return taskListFilters{in.Q, in.Filter, in.FilterTimezone, in.FilterIncludeNulls, in.SortBy, in.OrderBy, in.Expand}
+	return taskListFilters{in.Q, in.Filter, in.FilterTimezone, in.FilterIncludeNulls, in.SortBy, in.OrderBy, in.Expand, in.IncludeSubprojects}
 }
 
 func (in taskListViewInput) filters() taskListFilters {
-	return taskListFilters{in.Q, in.Filter, in.FilterTimezone, in.FilterIncludeNulls, in.SortBy, in.OrderBy, in.Expand}
+	return taskListFilters{in.Q, in.Filter, in.FilterTimezone, in.FilterIncludeNulls, in.SortBy, in.OrderBy, in.Expand, in.IncludeSubprojects}
 }
 
 // collection turns the bound query into a TaskCollection. The search term
@@ -124,6 +126,9 @@ func (f taskListFilters) collection(projectID, viewID int64, forceFlat bool) (*m
 	}
 	if forceFlat {
 		tc.SetForceFlatTasks()
+		if f.IncludeSubprojects {
+			tc.SetIncludeSubprojects()
+		}
 	}
 	return tc, nil
 }

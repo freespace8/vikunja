@@ -17,6 +17,7 @@
 package models
 
 import (
+	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"code.vikunja.io/api/pkg/user"
 	"code.vikunja.io/api/pkg/web"
 
+	"xorm.io/builder"
 	"xorm.io/xorm"
 )
 
@@ -66,6 +68,10 @@ type TaskCollection struct {
 	// into a flat-tasks endpoint and a separate buckets-with-tasks one, and the
 	// former sets this so a kanban view path still yields tasks.
 	forceFlatTasks bool
+
+	// includeSubprojects widens a single-project collection to the project and its
+	// non-archived descendants. Unexported and untagged so the frozen v1 API can't bind it.
+	includeSubprojects bool
 
 	web.CRUDable    `xorm:"-" json:"-"`
 	web.Permissions `xorm:"-" json:"-"`
@@ -195,6 +201,12 @@ func (tf *TaskCollection) SetForceFlatTasks() {
 	tf.forceFlatTasks = true
 }
 
+// SetIncludeSubprojects makes a flat collection of one project also return the
+// tasks of its sub-projects at any depth. Link shares and pseudo projects ignore it.
+func (tf *TaskCollection) SetIncludeSubprojects() {
+	tf.includeSubprojects = true
+}
+
 func getTaskOrTasksInBuckets(s *xorm.Session, a web.Auth, projects []*Project, view *ProjectView, opts *taskSearchOptions, filteringForBucket, forceFlatTasks bool) (tasks interface{}, resultCount int, totalItems int64, err error) {
 	if view != nil && GetSavedFilterIDFromProjectID(view.ProjectID) > 0 {
 		err = ensureTaskPositionsForSavedFilterView(s, a, projects, view, opts)
@@ -242,7 +254,36 @@ func getRelevantProjectsFromCollection(s *xorm.Session, a web.Auth, tf *TaskColl
 		}
 	}
 
-	return []*Project{{ID: tf.ProjectID}}, nil
+	projects = []*Project{{ID: tf.ProjectID}}
+	if !tf.includeSubprojects || tf.ProjectID < 1 {
+		return projects, nil
+	}
+
+	descendantIDs := []int64{}
+	accessible, err := accessibleProjectIDsCond(s, a, "projects.id")
+	if err != nil {
+		return nil, err
+	}
+	err = s.
+		Table("projects").
+		Select("projects.id").
+		Join("INNER", "project_ancestors", "project_ancestors.project_id = projects.id").
+		Where(builder.And(
+			builder.Eq{"project_ancestors.ancestor_id": tf.ProjectID},
+			builder.Gt{"project_ancestors.depth": 0},
+			builder.Eq{"projects.is_archived": false},
+			accessible,
+		)).
+		OrderBy("projects.id").
+		Find(&descendantIDs)
+	if err != nil {
+		return nil, fmt.Errorf("could not get sub-projects of project %d: %w", tf.ProjectID, err)
+	}
+
+	for _, id := range descendantIDs {
+		projects = append(projects, &Project{ID: id})
+	}
+	return projects, nil
 }
 
 func getFilterValueForBucketFilter(filter string, view *ProjectView) (newFilter string, err error) {

@@ -18,9 +18,14 @@ package webtests
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"code.vikunja.io/api/pkg/config"
+	"code.vikunja.io/api/pkg/models"
+	"code.vikunja.io/api/pkg/modules/auth"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -244,5 +249,104 @@ func TestHumaTaskCollection_Buckets(t *testing.T) {
 		rec := get("/api/v2/projects/1/views/4/buckets/tasks")
 		require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 		assert.Contains(t, rec.Body.String(), `testbucket1`)
+	})
+}
+
+// TestHumaTaskCollection_IncludeSubprojects covers include_subprojects on the
+// view-scoped flat endpoint: the project's list view then also returns the
+// tasks of its sub-projects, while the buckets endpoint and link shares keep
+// their single-project scope.
+func TestHumaTaskCollection_IncludeSubprojects(t *testing.T) {
+	e, err := setupTestEnv()
+	require.NoError(t, err)
+	tok := humaTokenFor(t, &testuser1)
+
+	post := func(path, body string) []byte {
+		rec := humaRequest(t, e, http.MethodPost, path, body, tok, "")
+		require.Equal(t, http.StatusCreated, rec.Code, "body: %s", rec.Body.String())
+		return rec.Body.Bytes()
+	}
+	createProject := func(title string, parentID int64) (id int64) {
+		body := fmt.Sprintf(`{"title":%q,"parent_project_id":%d}`, title, parentID)
+		var created struct {
+			ID int64 `json:"id"`
+		}
+		require.NoError(t, json.Unmarshal(post("/api/v2/projects", body), &created))
+		post(fmt.Sprintf("/api/v2/projects/%d/tasks", created.ID), fmt.Sprintf(`{"title":"%s task"}`, title))
+		return created.ID
+	}
+
+	parentID := createProject("webparent", 0)
+	childID := createProject("webchild", parentID)
+	grandchildID := createProject("webgrandchild", childID)
+
+	listViewID := func(projectID int64) int64 {
+		rec := humaRequest(t, e, http.MethodGet, fmt.Sprintf("/api/v2/projects/%d", projectID), "", tok, "")
+		require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+		var project struct {
+			Views []struct {
+				ID       int64  `json:"id"`
+				ViewKind string `json:"view_kind"`
+			} `json:"views"`
+		}
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &project))
+		for _, view := range project.Views {
+			if view.ViewKind == "list" {
+				return view.ID
+			}
+		}
+		require.FailNow(t, "project has no list view")
+		return 0
+	}
+	viewID := listViewID(parentID)
+	viewTasksPath := fmt.Sprintf("/api/v2/projects/%d/views/%d/tasks", parentID, viewID)
+
+	t.Run("flag returns the project, child and grandchild", func(t *testing.T) {
+		rec := humaRequest(t, e, http.MethodGet, viewTasksPath+"?include_subprojects=true", "", tok, "")
+		require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+		body := rec.Body.String()
+		assert.Contains(t, body, "webparent task")
+		assert.Contains(t, body, "webchild task")
+		assert.Contains(t, body, "webgrandchild task")
+		assert.Len(t, decodePaginatedTaskItems(t, rec), 3)
+		assert.Contains(t, body, fmt.Sprintf(`"project_id":%d`, grandchildID))
+	})
+
+	t.Run("without the flag only the project's own tasks come back", func(t *testing.T) {
+		rec := humaRequest(t, e, http.MethodGet, viewTasksPath, "", tok, "")
+		require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+		assert.Len(t, decodePaginatedTaskItems(t, rec), 1)
+		assert.NotContains(t, rec.Body.String(), "webchild task")
+	})
+
+	t.Run("sorting by position keeps every task", func(t *testing.T) {
+		rec := humaRequest(t, e, http.MethodGet,
+			viewTasksPath+"?include_subprojects=true&sort_by=position&order_by=asc", "", tok, "")
+		require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+		assert.Len(t, decodePaginatedTaskItems(t, rec), 3)
+	})
+
+	t.Run("a foreign project stays forbidden", func(t *testing.T) {
+		rec := humaRequest(t, e, http.MethodGet, "/api/v2/projects/2/views/8/tasks?include_subprojects=true", "", tok, "")
+		assert.Equal(t, http.StatusForbidden, rec.Code, "body: %s", rec.Body.String())
+	})
+
+	t.Run("link shares keep the single-project scope", func(t *testing.T) {
+		config.ServiceEnableLinkSharing.Set(true)
+		insertTestShareWithPermission(t, 60, parentID, models.PermissionRead)
+		shareTok, err := auth.NewLinkShareJWTAuthtoken(&models.LinkSharing{
+			ID:          60,
+			Hash:        "ghsa-qfwc-60",
+			ProjectID:   parentID,
+			Permission:  models.PermissionRead,
+			SharingType: models.SharingTypeWithoutPassword,
+			SharedByID:  6,
+		})
+		require.NoError(t, err)
+
+		rec := humaRequest(t, e, http.MethodGet, viewTasksPath+"?include_subprojects=true", "", shareTok, "")
+		require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+		assert.Len(t, decodePaginatedTaskItems(t, rec), 1)
+		assert.NotContains(t, rec.Body.String(), "webchild task")
 	})
 }
