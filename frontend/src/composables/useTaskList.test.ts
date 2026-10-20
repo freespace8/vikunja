@@ -1,5 +1,5 @@
 import {describe, it, expect, beforeEach, afterEach, vi} from 'vitest'
-import {defineComponent, h, nextTick} from 'vue'
+import {defineComponent, h, nextTick, ref, unref, type Ref} from 'vue'
 import {mount, flushPromises, enableAutoUnmount} from '@vue/test-utils'
 import {setActivePinia, createPinia} from 'pinia'
 import {createRouter, createMemoryHistory, RouterView, type Router} from 'vue-router'
@@ -96,7 +96,7 @@ function listRequests() {
 
 async function mountTaskList(
 	query: Record<string, string>,
-	{includeSubprojects = false, sortByDefault}: {includeSubprojects?: boolean, sortByDefault?: SortBy} = {},
+	{includeSubprojects = false, sortByDefault}: {includeSubprojects?: boolean | Ref<boolean | undefined>, sortByDefault?: SortBy} = {},
 ): Promise<Router> {
 	const router = createRouter({
 		history: createMemoryHistory(),
@@ -107,7 +107,7 @@ async function mountTaskList(
 
 	const TestComponent = defineComponent({
 		setup() {
-			useTaskList(() => 1, () => 1, sortByDefault, undefined, () => includeSubprojects)
+			useTaskList(() => 1, () => 1, sortByDefault, undefined, () => unref(includeSubprojects))
 			return () => h('div')
 		},
 	})
@@ -185,6 +185,29 @@ describe('useTaskList sub-project aggregation', () => {
 		await mountTaskList({sort: 'position:asc,priority:desc'}, {includeSubprojects: true})
 
 		expect(lastQuery().sort_by).toEqual(['priority'])
+	})
+
+	it('sends no request until it is known whether the project aggregates', async () => {
+		const includeSubprojects = ref<boolean | undefined>(undefined)
+		await mountTaskList({}, {includeSubprojects, sortByDefault: {position: 'asc'}})
+		expect(sdk.projectViewTasksList).not.toHaveBeenCalled()
+
+		includeSubprojects.value = true
+		await flushPromises()
+
+		expect(sdk.projectViewTasksList).toHaveBeenCalledOnce()
+		expect(lastQuery().include_subprojects).toBe(true)
+	})
+
+	it('keeps a deep-linked page when the sub-project status arrives and changes the sort', async () => {
+		const includeSubprojects = ref<boolean | undefined>(undefined)
+		const router = await mountTaskList({page: '3'}, {includeSubprojects, sortByDefault: {position: 'asc'}})
+
+		includeSubprojects.value = true
+		await flushPromises()
+
+		expect(router.currentRoute.value.query.page).toBe('3')
+		expect(lastQuery().page).toBe(3)
 	})
 
 	it('keeps the manual sort of a project without sub-projects', async () => {

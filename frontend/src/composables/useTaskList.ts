@@ -107,7 +107,8 @@ export function useTaskList(
 	projectViewIdGetter: ComputedGetter<number>,
 	sortByDefault: SortBy = SORT_BY_DEFAULT,
 	expandGetter: ComputedGetter<TaskExpansion> = () => ['subtasks'],
-	includeSubprojectsGetter: ComputedGetter<boolean> = () => false,
+	// undefined: not known yet, so no request is sent that might have to be repeated with other parameters.
+	includeSubprojectsGetter: ComputedGetter<boolean | undefined> = () => false,
 ) {
 	
 	const projectId = computed(() => projectIdGetter())
@@ -131,6 +132,7 @@ export function useTaskList(
 	const sortQuery = useRouteQuery('sort')
 
 	const includeSubprojects = computed(() => includeSubprojectsGetter())
+	const subprojectsKnown = computed(() => includeSubprojects.value !== undefined)
 
 	const sortBy = computed<SortBy>({
 		get() {
@@ -202,8 +204,10 @@ export function useTaskList(
 	})
 
 	watch(
-		[params, sortBy, page],
-		([, , newPage], [, , oldPage]) => {
+		[params, sortBy, page, subprojectsKnown],
+		([, , newPage, newKnown], [, , oldPage, oldKnown]) => {
+			// The sort changes once the sub-project status is known; that must not reset a deep-linked page.
+			if (!newKnown || !oldKnown) return
 			// A redundant page write can cancel the navigation restoring a saved sort.
 			if (newPage === oldPage && newPage !== 1) {
 				page.value = 1
@@ -226,7 +230,9 @@ export function useTaskList(
 	const query = useTasks(scope, {
 		page,
 		// Scope updates before the restore decision is made; hold the fetch until then.
-		enabled: () => !pendingQueryRestore.value && projectViewId.value === syncedViewId.value,
+		enabled: () => !pendingQueryRestore.value
+			&& projectViewId.value === syncedViewId.value
+			&& subprojectsKnown.value,
 	})
 	const loading = query.isFetching
 	const {tasks, totalPages} = query
