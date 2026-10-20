@@ -33,10 +33,7 @@
 							<FancyCheckbox v-model="activeColumns.done">
 								{{ $t('task.attributes.done') }}
 							</FancyCheckbox>
-							<FancyCheckbox
-								v-if="!includeSubprojects"
-								v-model="activeColumns.project"
-							>
+							<FancyCheckbox v-model="activeColumns.project">
 								{{ $t('task.attributes.project') }}
 							</FancyCheckbox>
 							<FancyCheckbox v-model="activeColumns.title">
@@ -126,7 +123,7 @@
 											@click="sort('done', $event)"
 										/>
 									</th>
-									<th v-if="showProjectColumn">
+									<th v-if="activeColumns.project">
 										{{ $t('task.attributes.project') }}
 									</th>
 									<th
@@ -258,7 +255,7 @@
 											variant="small"
 										/>
 									</td>
-									<td v-if="showProjectColumn">
+									<td v-if="activeColumns.project">
 										<RouterLink
 											v-if="projectList.projects[t.project_id]"
 											:to="{ name: 'project.index', params: { projectId: t.project_id } }"
@@ -408,12 +405,13 @@ const SORT_BY_DEFAULT: SortBy = {
 	index: 'desc',
 }
 
-const activeColumns = useStorage('tableViewColumns', {...ACTIVE_COLUMNS_DEFAULT})
 const sortBy = useStorage<SortBy>('tableViewSortBy', {...SORT_BY_DEFAULT})
 
 const includeSubprojects = useIncludeSubprojects(() => props.projectId)
-// The column setting is stored globally, so a parent project overrides it to keep sub-project tasks distinguishable.
-const showProjectColumn = computed(() => includeSubprojects.value || activeColumns.value.project)
+// Parent projects keep their own column choice so showing Project by default there doesn't change other tables.
+const plainColumns = useStorage('tableViewColumns', {...ACTIVE_COLUMNS_DEFAULT})
+const aggregateColumns = useStorage('tableViewColumnsAggregate', {...ACTIVE_COLUMNS_DEFAULT, project: true})
+const activeColumns = computed(() => includeSubprojects.value ? aggregateColumns.value : plainColumns.value)
 
 const taskList = useTaskList(
 	() => props.projectId, 
