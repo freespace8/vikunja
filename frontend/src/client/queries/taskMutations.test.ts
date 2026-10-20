@@ -25,6 +25,7 @@ const sdk = vi.hoisted(() => ({
 	bucketsList: vi.fn(),
 	patchTasksRead: vi.fn(),
 	projectTasksList: vi.fn(),
+	projectViewTasksList: vi.fn(),
 	projectViewBucketsTasksList: vi.fn(),
 	taskAssigneesCreate: vi.fn(),
 	taskBucketUpdate: vi.fn(),
@@ -117,6 +118,41 @@ describe('task mutations', () => {
 			body: [{op: 'add', path: '/title', value: 'new'}],
 		})
 		expect(client.getQueryData<Task>(taskKeys.detail(1))?.title).toBe('new')
+	})
+
+	describe('with an open list that includes sub-project tasks', () => {
+		async function openAggregateList() {
+			const client = new QueryClient()
+			const scope = {project: 100, view: 10, params: {include_subprojects: true}}
+			sdk.projectViewTasksList.mockResolvedValue({
+				data: {items: [{id: 3, project_id: 101, title: 'child task'}], total: 1},
+			})
+			const {queryKey, queryFn} = tasksQuery(scope)
+			const unsubscribe = new QueryObserver(client, {queryKey, queryFn}).subscribe(() => {})
+			await vi.waitFor(() => expect(client.getQueryData(queryKey)).toBeDefined())
+			sdk.projectViewTasksList.mockClear()
+			return {client, unsubscribe}
+		}
+
+		it.each([false, true])('does not refetch it when the project stays (optimistic: %s)', async optimistic => {
+			const {client, unsubscribe} = await openAggregateList()
+			sdk.patchTasksRead.mockResolvedValue({data: {id: 3, project_id: 101, done: true}})
+			await client.getMutationCache()
+				.build(client, updateTaskMutationOptions(optimistic))
+				.execute({id: 3, project_id: 101, done: true})
+			expect(sdk.projectViewTasksList).not.toHaveBeenCalled()
+			unsubscribe()
+		})
+
+		it.each([false, true])('refetches it when the task moves (optimistic: %s)', async optimistic => {
+			const {client, unsubscribe} = await openAggregateList()
+			sdk.patchTasksRead.mockResolvedValue({data: {id: 3, project_id: 7}})
+			await client.getMutationCache()
+				.build(client, updateTaskMutationOptions(optimistic))
+				.execute({id: 3, project_id: 7})
+			expect(sdk.projectViewTasksList).toHaveBeenCalledOnce()
+			unsubscribe()
+		})
 	})
 
 	it('addresses the delete endpoint by task id', async () => {

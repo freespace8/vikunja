@@ -1,4 +1,4 @@
-import {hashKey, type Query, type QueryClient, type QueryKey} from '@tanstack/vue-query'
+import {hashKey, type QueryClient, type QueryKey} from '@tanstack/vue-query'
 import type {Task} from '@/client/generated'
 import {mapTasksDeep, mergeTask, removeTask} from '@/helpers/task'
 import {normalizeTask, taskKeys, type PaginatedTaskResponse, type TaskResponse} from './tasks'
@@ -124,6 +124,18 @@ export function removeTaskFromBoard(client: QueryClient, key: QueryKey, id: numb
 	client.setQueryData<BoardData>(key, board => board && removeFromBoard(board, id, dropMembership))
 }
 
+// Whether `updated` puts a cached task into another project than the one the cache holds it in.
+export function changesTaskProject(client: QueryClient, updated: Task): boolean {
+	if (updated.id === undefined || !updated.project_id) return false
+	const cached = [
+		...client.getQueriesData<TaskResponse>({queryKey: taskKeys.details}).map(([, task]) => task),
+		...client.getQueriesData<PaginatedTaskResponse>({queryKey: taskKeys.lists})
+			.flatMap(([, list]) => list?.items ?? []),
+		...client.getQueriesData<TaskResponse[]>({queryKey: taskKeys.allLists}).flatMap(([, tasks]) => tasks ?? []),
+	].find(task => task?.id === updated.id)
+	return cached !== undefined && cached.project_id !== updated.project_id
+}
+
 export function replaceTaskEverywhere(client: QueryClient, updated: Task) {
 	if (updated.id === undefined) return
 	if (updated.project_id) {
@@ -144,14 +156,17 @@ export async function invalidateTaskMembership(
 	client: QueryClient,
 	id?: number,
 	refetchType: 'none' | 'active' = 'none',
+	changedProject = false,
 ) {
-	// Membership of a list that includes sub-projects can't be patched locally, so it always refetches.
-	const aggregate = (query: Query) => isAggregateKey(query.queryKey)
 	await Promise.all([
-		client.invalidateQueries({queryKey: taskKeys.lists, refetchType, predicate: query => !aggregate(query)}),
-		client.invalidateQueries({queryKey: taskKeys.lists, refetchType: 'active', predicate: aggregate}),
-		client.invalidateQueries({queryKey: taskKeys.allLists, refetchType, predicate: query => !aggregate(query)}),
-		client.invalidateQueries({queryKey: taskKeys.allLists, refetchType: 'active', predicate: aggregate}),
+		client.invalidateQueries({queryKey: taskKeys.lists, refetchType}),
+		client.invalidateQueries({queryKey: taskKeys.allLists, refetchType}),
+		// Lists that include sub-projects can't tell locally whether a task that changed project still belongs.
+		...(changedProject ? [taskKeys.lists, taskKeys.allLists].map(queryKey => client.invalidateQueries({
+			queryKey,
+			refetchType: 'active',
+			predicate: query => isAggregateKey(query.queryKey),
+		})) : []),
 		// Refetching a board returns only the first page per bucket, so mutations patch it instead of refetching.
 		client.invalidateQueries({queryKey: kanbanKeys.all, refetchType: 'none'}),
 		...(id === undefined ? [] : [client.invalidateQueries({queryKey: [...taskKeys.details, id], refetchType})]),

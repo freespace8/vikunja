@@ -29,6 +29,7 @@ import {contextMutationOptions} from './contextMutation'
 import {normalizeTask, taskKeys, type PaginatedTaskResponse, type TaskResponse} from './tasks'
 import {bucketKeys, kanbanKeys, normalizeBucket, type BoardData} from './kanban'
 import {
+	changesTaskProject,
 	invalidateTaskMembership,
 	mapTaskEverywhere,
 	removeTaskEverywhere,
@@ -185,15 +186,21 @@ export function updateTaskMutationOptions(optimistic = false) {
 			path: {task: task.id},
 			body: taskPatchBody(task),
 		})).data,
-		optimistic: optimistic ? {
-			queryKeys: ({id}, client) => taskQueryKeys(client, id),
-			update: (task, client) => replaceTaskEverywhere(client, task),
-		} : undefined,
+		// Always runs, so onSettled learns whether the task changes project before the cache is rewritten;
+		// it only writes to the cache for an optimistic update.
+		optimistic: {
+			queryKeys: (task, client) => optimistic ? taskQueryKeys(client, task.id) : [],
+			update: (task, client) => {
+				const changesProject = changesTaskProject(client, task)
+				if (optimistic) replaceTaskEverywhere(client, task)
+				return changesProject
+			},
+		},
 		onSuccess: (task, input, client) => {
 			replaceTaskEverywhere(client, task)
 			reconcileDoneBuckets(client, normalizeTask({...task, id: input.id}))
 		},
-		onSettled: ({id}, client) => invalidateTaskMembership(client, id),
+		onSettled: ({id}, client, changedProject) => invalidateTaskMembership(client, id, 'none', changedProject),
 	})
 }
 

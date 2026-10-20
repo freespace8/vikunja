@@ -10,6 +10,7 @@ import {
 } from './tasks'
 import {kanbanKeys, kanbanQuery, normalizeBucket, type BoardData} from './kanban'
 import {
+	changesTaskProject,
 	invalidateTaskMembership,
 	mapTaskEverywhere,
 	replaceTaskEverywhere,
@@ -217,7 +218,7 @@ describe('task cache reconciliation', () => {
 			removeTaskEverywhere(client, 3)
 			expect(client.getQueryData<PaginatedTaskResponse>(list)).toEqual({items: [], total: 0})
 		})
-		it('refetches an open list even when the caller only marks lists stale', async () => {
+		it('only refetches an open list when the task changed project', async () => {
 			sdk.projectViewTasksList.mockResolvedValue({data: {items: [], total: 0}})
 			const client = new QueryClient()
 			const aggregate = tasksQuery(aggregateScope)
@@ -230,10 +231,23 @@ describe('task cache reconciliation', () => {
 			})
 			expect(sdk.projectViewTasksList).toHaveBeenCalledTimes(2)
 			await invalidateTaskMembership(client, 3)
+			expect(sdk.projectViewTasksList).toHaveBeenCalledTimes(2)
+			await invalidateTaskMembership(client, 3, 'none', true)
 			// The server decides whether a task that left the subtree still belongs to the list.
 			expect(sdk.projectViewTasksList).toHaveBeenCalledTimes(3)
 			expect(client.getQueryState(plain.queryKey)?.isInvalidated).toBe(true)
 			unsubscribe.forEach(stop => stop())
+		})
+		it('tells a move from an update that keeps the project', () => {
+			const client = new QueryClient()
+			client.setQueryData(taskKeys.list(aggregateScope), {
+				items: [normalizeTask({id: 3, project_id: 101, title: 'child task'})],
+				total: 1,
+			})
+			expect(changesTaskProject(client, {id: 3, project_id: 101, done: true})).toBe(false)
+			expect(changesTaskProject(client, {id: 3, done: true})).toBe(false)
+			expect(changesTaskProject(client, {id: 4, project_id: 102})).toBe(false)
+			expect(changesTaskProject(client, {id: 3, project_id: 102})).toBe(true)
 		})
 	})
 })
