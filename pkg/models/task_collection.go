@@ -213,6 +213,10 @@ func getTaskOrTasksInBuckets(s *xorm.Session, a web.Auth, projects []*Project, v
 		}
 	}
 
+	if filteringForBucket && opts.subprojectBuckets != nil {
+		opts.subprojectBuckets.takeBucketFilter(opts)
+	}
+
 	if filteringForBucket || forceFlatTasks {
 		return getTasksForProjects(s, projects, a, opts, view)
 	}
@@ -451,6 +455,13 @@ func (tf *TaskCollection) ReadAll(s *xorm.Session, a web.Auth, search string, pa
 	projects, err := getRelevantProjectsFromCollection(s, a, tf)
 	if err != nil {
 		return nil, 0, 0, err
+	}
+
+	if tf.includeSubprojects && view != nil {
+		opts.subprojectBuckets, err = newSubprojectBuckets(s, view, projects)
+		if err != nil {
+			return nil, 0, 0, err
+		}
 	}
 
 	return getTaskOrTasksInBuckets(s, a, projects, view, opts, filteringForBucket, tf.forceFlatTasks)

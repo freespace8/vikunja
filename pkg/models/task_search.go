@@ -636,7 +636,7 @@ func (d *dbTaskSearcher) Search(opts *taskSearchOptions) (tasks []*Task, totalCo
 	}
 
 	limit, start := getLimitFromPageIndex(opts.page, opts.perPage)
-	cond := builder.And(builder.Or(projectIDCond, favoritesCond), where, filterCond)
+	cond := builder.And(builder.Or(projectIDCond, favoritesCond), where, filterCond, opts.bucketCond)
 
 	// When the favorites arm is still part of the query (Favorites view, or
 	// out-of-scope favorites exist), its shape is unsupported — stay unranked.

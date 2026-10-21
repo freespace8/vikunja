@@ -244,6 +244,11 @@ type taskSearchOptions struct {
 	expand             []TaskCollectionExpandable
 	projectViewID      int64
 
+	// subprojectBuckets and bucketCond place sub-project tasks in the buckets of
+	// a parent's kanban view; see kanban_subprojects.go.
+	subprojectBuckets *subprojectBuckets
+	bucketCond        builder.Cond
+
 	// userProvidedSort distinguishes an explicit sort_by from the id/position
 	// defaults appended later, so relevance ordering only replaces the default sort.
 	userProvidedSort bool

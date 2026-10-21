@@ -27,6 +27,11 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 )
 
+const bucketsSubprojectsDoc = "With include_subprojects on a manual kanban view, the tasks of the project's non-archived sub-projects are placed in the project's own buckets; no buckets are added. " +
+	"A sub-project task goes where it sits on its own project's first manual kanban view: the done bucket maps to the done bucket, the default bucket to the default bucket, any other bucket to the bucket with the same title (trimmed, case-insensitive), and anything unmatched to the default bucket. " +
+	"Each bucket's count is its column total (own plus sub-project tasks). Within a bucket the project's own tasks come first, ordered by position, then the sub-project tasks by id. A bucket limit counts only the project's own tasks. " +
+	"A bucket_id = N filter on the flat tasks endpoint selects the same tasks as bucket N here."
+
 const taskListFilterDoc = "Filtering, sorting and search apply to every variant. See https://vikunja.io/docs/filters for the filter language."
 
 type taskListBody struct {
@@ -62,7 +67,7 @@ type TaskListQueryParams struct {
 	OrderBy            []string `query:"order_by,explode" doc:"Sort order per sort_by field, asc or desc. Repeatable; defaults to asc."`
 	Expand             []string `query:"expand,explode" enum:"subtasks,buckets,reactions,comments,comment_count,time_entries_count,is_unread" doc:"Embed extra, more expensive data per task. Repeatable."`
 	Format             string   `query:"format" enum:"html,markdown" doc:"How rich-text fields are exchanged. See the API description."`
-	IncludeSubprojects bool     `query:"include_subprojects" doc:"If true, a project-scoped list also returns the tasks of the project's non-archived sub-projects at any depth. Ignored by the all-projects list, by the buckets endpoint and for link shares."`
+	IncludeSubprojects bool     `query:"include_subprojects" doc:"If true, a project-scoped list also returns the tasks of the project's non-archived sub-projects at any depth. On a manual kanban view (buckets endpoint, or a bucket_id filter on the flat endpoint) the sub-project tasks are shown in the parent's buckets, see the buckets endpoint. Ignored by the all-projects list and for link shares."`
 }
 
 type taskListAllInput struct {
@@ -153,9 +158,9 @@ func (f taskListFilters) collection(projectID, viewID int64, forceFlat bool) (*m
 	}
 	if forceFlat {
 		tc.SetForceFlatTasks()
-		if f.IncludeSubprojects {
-			tc.SetIncludeSubprojects()
-		}
+	}
+	if f.IncludeSubprojects {
+		tc.SetIncludeSubprojects()
 	}
 	return tc, nil
 }
@@ -193,7 +198,7 @@ func RegisterTaskCollectionRoutes(api huma.API) {
 	Register(api, huma.Operation{
 		OperationID: "project-view-buckets-tasks-list",
 		Summary:     "List a kanban view's buckets with their tasks",
-		Description: "Returns the buckets of a project's kanban view, each populated with the tasks in it. Requires read access to the project. Not paginated: the number and size of buckets follow the view's bucket configuration, so page/per_page do not apply. " + taskListFilterDoc,
+		Description: "Returns the buckets of a project's kanban view, each populated with the tasks in it. Requires read access to the project. Not paginated: the number and size of buckets follow the view's bucket configuration, so page/per_page do not apply. " + bucketsSubprojectsDoc + " " + taskListFilterDoc,
 		Method:      http.MethodGet,
 		Path:        "/projects/{project}/views/{view}/buckets/tasks",
 		Tags:        tags,
