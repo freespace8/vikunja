@@ -708,6 +708,27 @@ func TestKanbanSubprojects_Move(t *testing.T) {
 		assert.Equal(t, f.child["To-Do"].ID, bucketOf(t, f, childTask, f.childView.ID))
 	})
 
+	t.Run("a drop into the parent's default bucket is refused when the child's default bucket is its done bucket", func(t *testing.T) {
+		f := setupKanbanFixture(t, owner)
+		childTask := f.tree.tasks[f.tree.child.ID].ID
+		// The child's default bucket is also its done bucket, so its cards show in the parent's done bucket.
+		f.childView.DefaultBucketID = f.child["Done"].ID
+		f.childView.DoneBucketID = f.child["Done"].ID
+		_, err := f.s.ID(f.childView.ID).Cols("default_bucket_id", "done_bucket_id").Update(f.childView)
+		require.NoError(t, err)
+		f.child["To-Do"].Title = "Inbox"
+		_, err = f.s.ID(f.child["To-Do"].ID).Cols("title").Update(f.child["To-Do"])
+		require.NoError(t, err)
+		placeTask(t, f.s, childTask, f.child["Doing"])
+
+		_, can, err := drop(f, owner, childTask, f.parent["To-Do"], true)
+
+		require.Error(t, err)
+		assert.False(t, can)
+		assert.True(t, IsErrSubprojectBucketNotFound(err))
+		assert.Equal(t, f.child["Doing"].ID, bucketOf(t, f, childTask, f.childView.ID))
+	})
+
 	t.Run("a sub-project without a manual kanban view is refused", func(t *testing.T) {
 		f := setupKanbanFixture(t, owner)
 		childTask := f.tree.tasks[f.tree.child.ID].ID
