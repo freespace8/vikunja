@@ -7723,7 +7723,7 @@ export type ProjectTasksListData = {
          */
         format?: 'html' | 'markdown';
         /**
-         * If true, a project-scoped list also returns the tasks of the project's non-archived sub-projects at any depth. Ignored by the all-projects list, by the buckets endpoint and for link shares.
+         * If true, a project-scoped list also returns the tasks of the project's non-archived sub-projects at any depth. On a manual kanban view (buckets endpoint, or a bucket_id filter on the flat endpoint) the sub-project tasks are shown in the parent's buckets, see the buckets endpoint. Ignored by the all-projects list and for link shares.
          */
         include_subprojects?: boolean;
     };
@@ -8477,7 +8477,7 @@ export type ProjectViewBucketsTasksListData = {
          */
         format?: 'html' | 'markdown';
         /**
-         * If true, a project-scoped list also returns the tasks of the project's non-archived sub-projects at any depth. Ignored by the all-projects list, by the buckets endpoint and for link shares.
+         * If true, a project-scoped list also returns the tasks of the project's non-archived sub-projects at any depth. On a manual kanban view (buckets endpoint, or a bucket_id filter on the flat endpoint) the sub-project tasks are shown in the parent's buckets, see the buckets endpoint. Ignored by the all-projects list and for link shares.
          */
         include_subprojects?: boolean;
     };
@@ -8643,7 +8643,7 @@ export type ProjectViewTasksListData = {
          */
         format?: 'html' | 'markdown';
         /**
-         * If true, a project-scoped list also returns the tasks of the project's non-archived sub-projects at any depth. Ignored by the all-projects list, by the buckets endpoint and for link shares.
+         * If true, a project-scoped list also returns the tasks of the project's non-archived sub-projects at any depth. On a manual kanban view (buckets endpoint, or a bucket_id filter on the flat endpoint) the sub-project tasks are shown in the parent's buckets, see the buckets endpoint. Ignored by the all-projects list and for link shares.
          */
         include_subprojects?: boolean;
     };
@@ -8988,7 +8988,7 @@ export type TasksListData = {
          */
         format?: 'html' | 'markdown';
         /**
-         * If true, a project-scoped list also returns the tasks of the project's non-archived sub-projects at any depth. Ignored by the all-projects list, by the buckets endpoint and for link shares.
+         * If true, a project-scoped list also returns the tasks of the project's non-archived sub-projects at any depth. On a manual kanban view (buckets endpoint, or a bucket_id filter on the flat endpoint) the sub-project tasks are shown in the parent's buckets, see the buckets endpoint. Ignored by the all-projects list and for link shares.
          */
         include_subprojects?: boolean;
     };
