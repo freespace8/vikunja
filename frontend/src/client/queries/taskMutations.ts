@@ -86,18 +86,26 @@ function taskPatchBody(task: Task): JsonPatchOp[] {
 	return Object.entries(taskWriteBody(task)).map(([field, value]) => ({op: 'add', path: `/${field}`, value}))
 }
 
-async function reconcileDoneBuckets(client: QueryClient, task: TaskResponse) {
+// Whether an aggregate board shows the task as a sub-project card whose done state the update changes.
+// Read before the cache takes the update.
+function changesAggregateCardDone(client: QueryClient, task: Task): boolean {
+	return client.getQueriesData<BoardData>({queryKey: kanbanKeys.all}).some(([key, board]) => {
+		const project = kanbanKeys.projectOf(key)
+		if (board === undefined || !isAggregateBoardKey(key)) return false
+		return board.buckets.some(bucket => bucket.tasks.some(item => item.id === task.id
+			&& item.project_id !== project
+			&& item.done !== task.done))
+	})
+}
+
+async function reconcileDoneBuckets(client: QueryClient, task: TaskResponse, aggregateDoneChanged: boolean) {
 	const handled = new Set<number>()
-	let aggregateBoardHoldsTask = false
 	for (const [key, board] of client.getQueriesData<BoardData>({queryKey: kanbanKeys.all})) {
 		const project = kanbanKeys.projectOf(key)
 		const viewId = kanbanKeys.viewOf(key)
 		if (!board || project === undefined || viewId === undefined) continue
 		// The column of a sub-project's card follows the done bucket of its own project, which only the server maps.
-		if (isAggregateBoardKey(key) && task.project_id !== project) {
-			aggregateBoardHoldsTask ||= board.buckets.some(bucket => bucket.tasks.some(item => item.id === task.id))
-			continue
-		}
+		if (isAggregateBoardKey(key) && task.project_id !== project) continue
 		const view = getCachedProject(project, client)?.views?.find(item => item.id === viewId)
 		if (!view?.done_bucket_id) continue
 		const source = board.buckets.find(bucket => bucket.tasks.some(item => item.id === task.id))
@@ -114,7 +122,7 @@ async function reconcileDoneBuckets(client: QueryClient, task: TaskResponse) {
 		client.setQueryData(key, {...board, buckets: buckets.map(normalizeBucket)})
 		reconcileTaskBuckets(client, {project, view: viewId, bucket: target, task: task.id})
 	}
-	if (aggregateBoardHoldsTask) void refetchAggregateBoards(client, task.project_id)
+	if (aggregateDoneChanged) void refetchAggregateBoards(client, task.project_id)
 	await reconcileDoneBucketsWithoutBoard(client, task, handled)
 }
 
@@ -213,16 +221,19 @@ export function updateTaskMutationOptions(optimistic = false) {
 		optimistic: {
 			queryKeys: (task, client) => optimistic ? taskQueryKeys(client, task.id) : [],
 			update: (task, client) => {
-				const changesProject = changesTaskProject(client, task)
+				const changes = {
+					project: changesTaskProject(client, task),
+					aggregateDone: changesAggregateCardDone(client, task),
+				}
 				if (optimistic) replaceTaskEverywhere(client, task)
-				return changesProject
+				return changes
 			},
 		},
-		onSuccess: async (task, input, client) => {
+		onSuccess: async (task, input, client, changes) => {
 			replaceTaskEverywhere(client, task)
-			await reconcileDoneBuckets(client, normalizeTask({...task, id: input.id}))
+			await reconcileDoneBuckets(client, normalizeTask({...task, id: input.id}), changes.aggregateDone)
 		},
-		onSettled: ({id}, client, changedProject) => invalidateTaskMembership(client, id, 'none', changedProject),
+		onSettled: ({id}, client, changes) => invalidateTaskMembership(client, id, 'none', changes.project),
 	})
 }
 

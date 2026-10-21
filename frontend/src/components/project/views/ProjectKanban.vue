@@ -592,7 +592,12 @@ async function updateTaskPosition(e: SortableEvent & {originalEvent?: MouseEvent
 		if (includeSubprojects.value && task.project_id !== project) {
 			// A sub-project card has no position in this view, so it is only moved between columns.
 			if (bucket.id !== sourceBucket.value) {
-				await moveMutation.mutateAsync({project, view, bucket: bucket.id, task})
+				await moveMutation.mutateAsync({
+					project,
+					view,
+					bucket: bucket.id,
+					task,
+				})
 			}
 			return
 		}
@@ -676,8 +681,8 @@ async function createNewBucket() {
 		view: props.viewId,
 		bucket: {title: newBucketTitle.value},
 	})
-	await refetchAggregateBoard()
 	newBucketTitle.value = ''
+	await refetchAggregateBoard()
 }
 
 function deleteBucketModal(bucketId: number) {
@@ -721,8 +726,8 @@ async function saveBucketTitle(bucketId: number, bucketTitle: string) {
 		id: bucketId,
 		title: bucketTitle,
 	}, saveBucketTitleMutation)
-	await refetchAggregateBoard()
 	bucketTitleEditable.value = false
+	await refetchAggregateBoard()
 }
 
 function updateBuckets(value: BucketResponse[]) {

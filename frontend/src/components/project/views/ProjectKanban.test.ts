@@ -359,8 +359,16 @@ describe('ProjectKanban', () => {
 		const board = (first: unknown[] = [own, child], second: unknown[] = []) => ({
 			data: {
 				items: [
-					{...buckets[0], tasks: first, count: first.length},
-					{...buckets[1], tasks: second, count: second.length},
+					{
+						...buckets[0],
+						tasks: first,
+						count: first.length,
+					},
+					{
+						...buckets[1],
+						tasks: second,
+						count: second.length,
+					},
 					buckets[2],
 				],
 			},
