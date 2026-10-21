@@ -234,7 +234,14 @@ func GetTasksInBucketsForView(s *xorm.Session, view *ProjectView, projects []*Pr
 	originalFilter := opts.filter
 	for id, bucket := range bucketMap {
 
-		if !strings.Contains(originalFilter, taskPropertyBucketID) {
+		if opts.subprojectBuckets != nil {
+			opts.bucketCond = opts.subprojectBuckets.cond(id)
+			// Parsed anew for every bucket: the conversion to SQL rewrites the filters in place.
+			opts.parsedFilters, err = getTaskFiltersFromFilterString(originalFilter, opts.filterTimezone)
+			if err != nil {
+				return
+			}
+		} else if !strings.Contains(originalFilter, taskPropertyBucketID) {
 
 			var bucketFilter = taskPropertyBucketID + " = " + strconv.FormatInt(id, 10)
 			if view.BucketConfigurationMode == BucketConfigurationModeFilter {

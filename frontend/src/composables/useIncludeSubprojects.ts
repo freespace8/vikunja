@@ -11,7 +11,7 @@ export function shouldIncludeSubprojects(
 	return projectId > 0 && childProjects.some(child => !child.is_archived)
 }
 
-// Whether a list or table view of this project also shows the tasks of its sub-projects.
+// Whether a list, table or kanban view of this project also shows the tasks of its sub-projects.
 // undefined while the project list that answers this is still loading.
 export function useIncludeSubprojects(projectIdGetter: ComputedGetter<number>) {
 	const projectList = useProjects()

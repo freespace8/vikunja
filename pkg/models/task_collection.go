@@ -17,7 +17,6 @@
 package models
 
 import (
-	"fmt"
 	"regexp"
 	"strconv"
 	"strings"
@@ -25,7 +24,6 @@ import (
 	"code.vikunja.io/api/pkg/user"
 	"code.vikunja.io/api/pkg/web"
 
-	"xorm.io/builder"
 	"xorm.io/xorm"
 )
 
@@ -215,6 +213,10 @@ func getTaskOrTasksInBuckets(s *xorm.Session, a web.Auth, projects []*Project, v
 		}
 	}
 
+	if filteringForBucket && opts.subprojectBuckets != nil {
+		opts.subprojectBuckets.takeBucketFilter(opts)
+	}
+
 	if filteringForBucket || forceFlatTasks {
 		return getTasksForProjects(s, projects, a, opts, view)
 	}
@@ -259,25 +261,9 @@ func getRelevantProjectsFromCollection(s *xorm.Session, a web.Auth, tf *TaskColl
 		return projects, nil
 	}
 
-	descendantIDs := []int64{}
-	accessible, err := accessibleProjectIDsCond(s, a, "projects.id")
+	descendantIDs, err := subprojectIDs(s, a, tf.ProjectID)
 	if err != nil {
 		return nil, err
-	}
-	err = s.
-		Table("projects").
-		Select("projects.id").
-		Join("INNER", "project_ancestors", "project_ancestors.project_id = projects.id").
-		Where(builder.And(
-			builder.Eq{"project_ancestors.ancestor_id": tf.ProjectID},
-			builder.Gt{"project_ancestors.depth": 0},
-			builder.Eq{"projects.is_archived": false},
-			accessible,
-		)).
-		OrderBy("projects.id").
-		Find(&descendantIDs)
-	if err != nil {
-		return nil, fmt.Errorf("could not get sub-projects of project %d: %w", tf.ProjectID, err)
 	}
 
 	for _, id := range descendantIDs {
@@ -467,6 +453,11 @@ func (tf *TaskCollection) ReadAll(s *xorm.Session, a web.Auth, search string, pa
 	}
 
 	projects, err := getRelevantProjectsFromCollection(s, a, tf)
+	if err != nil {
+		return nil, 0, 0, err
+	}
+
+	opts.subprojectBuckets, err = tf.subprojectBucketsFor(s, view, projects)
 	if err != nil {
 		return nil, 0, 0, err
 	}

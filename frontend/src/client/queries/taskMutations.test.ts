@@ -308,6 +308,141 @@ describe('task mutations', () => {
 		])
 	})
 
+	describe('moving a task that a parent project board shows as a sub-project card', () => {
+		async function openBoards() {
+			sdk.projectViewBucketsTasksList.mockResolvedValue({
+				data: {items: [{
+					id: 3,
+					tasks: [{
+						id: 1,
+						project_id: 101,
+					}],
+				}, {
+					id: 4,
+					tasks: [],
+				}]},
+			})
+			const client = new QueryClient()
+			const boards = {
+				parent: kanbanQuery(100, 10, {include_subprojects: true}),
+				child: kanbanQuery(101, 11),
+				otherAggregate: kanbanQuery(101, 12, {include_subprojects: true}),
+			}
+			const detailFn = vi.fn(() => ({
+				id: 1,
+				project_id: 101,
+			}))
+			const detail = taskKeys.detail(1)
+			const unsubscribe = [
+				...Object.values(boards).map(({queryKey, queryFn}) =>
+					new QueryObserver(client, {queryKey, queryFn}).subscribe(() => {})),
+				new QueryObserver(client, {
+					queryKey: detail,
+					queryFn: detailFn,
+				}).subscribe(() => {}),
+			]
+			await vi.waitFor(() => {
+				expect(sdk.projectViewBucketsTasksList).toHaveBeenCalledTimes(3)
+				expect(detailFn).toHaveBeenCalledOnce()
+			})
+			sdk.projectViewBucketsTasksList.mockClear()
+			return {client, detailFn, unsubscribe}
+		}
+
+		it('reads the parent board and the detail again when it is moved on the parent board', async () => {
+			const {client, detailFn, unsubscribe} = await openBoards()
+			sdk.taskBucketUpdate.mockResolvedValue({data: {
+				bucket_id: 4,
+				task: {
+					id: 1,
+					project_id: 101,
+				},
+			}})
+			await client.getMutationCache()
+				.build(client, moveTaskMutationOptions())
+				.execute({
+					project: 100,
+					view: 10,
+					bucket: 4,
+					task: {
+						id: 1,
+						project_id: 101,
+					},
+				})
+			// The board of the task's own project is not an aggregate and is patched by the move itself.
+			await vi.waitFor(() => expect(sdk.projectViewBucketsTasksList).toHaveBeenCalledTimes(1))
+			expect(sdk.projectViewBucketsTasksList).toHaveBeenCalledWith(expect.objectContaining({
+				path: {
+					project: 100,
+					view: 10,
+				},
+			}))
+			await vi.waitFor(() => expect(detailFn).toHaveBeenCalledTimes(2))
+			unsubscribe.forEach(stop => stop())
+		})
+
+		it('reads the parent board again but not the detail when it is moved on its own board', async () => {
+			const {client, detailFn, unsubscribe} = await openBoards()
+			sdk.taskBucketUpdate.mockResolvedValue({data: {
+				bucket_id: 4,
+				task: {
+					id: 1,
+					project_id: 101,
+				},
+			}})
+			await client.getMutationCache()
+				.build(client, moveTaskMutationOptions())
+				.execute({
+					project: 101,
+					view: 11,
+					bucket: 4,
+					task: {
+						id: 1,
+						project_id: 101,
+					},
+				})
+			await vi.waitFor(() => expect(sdk.projectViewBucketsTasksList).toHaveBeenCalledWith(
+				expect.objectContaining({path: {
+					project: 100,
+					view: 10,
+				}}),
+			))
+			// A board of the task's own project shows the card as its own and is patched locally.
+			expect(sdk.projectViewBucketsTasksList).toHaveBeenCalledTimes(1)
+			expect(detailFn).toHaveBeenCalledOnce()
+			unsubscribe.forEach(stop => stop())
+		})
+
+		it('patches the parent board only when its own task moves on it', async () => {
+			const {client, unsubscribe} = await openBoards()
+			sdk.taskBucketUpdate.mockResolvedValue({data: {
+				bucket_id: 4,
+				task: {
+					id: 1,
+					project_id: 100,
+				},
+			}})
+			await client.getMutationCache()
+				.build(client, moveTaskMutationOptions())
+				.execute({
+					project: 100,
+					view: 10,
+					bucket: 4,
+					task: {
+						id: 1,
+						project_id: 100,
+					},
+				})
+			expect(sdk.projectViewBucketsTasksList).not.toHaveBeenCalledWith(expect.objectContaining({
+				path: {
+					project: 100,
+					view: 10,
+				},
+			}))
+			unsubscribe.forEach(stop => stop())
+		})
+	})
+
 	it('keeps the buckets of a task in a list when an update response and the edited task carry none', async () => {
 		const client = new QueryClient()
 		const key = taskKeys.list({params: {expand: ['buckets']}})
@@ -457,6 +592,127 @@ describe('task mutations', () => {
 		// structural sharing hides no-op rewrites, so count writes instead: 1 = seed only
 		expect(client.getQueryState(otherKey)?.dataUpdateCount).toBe(1)
 		expect(sdk.projectViewBucketsTasksList).not.toHaveBeenCalled()
+	})
+
+	it('reads an aggregate board again instead of moving a sub-project card to the parent done bucket', async () => {
+		const {projectKeys} = await import('./projects')
+		sdk.projectViewBucketsTasksList.mockResolvedValue({
+			data: {
+				items: [
+					{
+						id: 1002,
+						tasks: [{
+							id: 3,
+							project_id: 101,
+							done: false,
+						}],
+						count: 1,
+					},
+					{
+						id: 1003,
+						tasks: [],
+						count: 0,
+					},
+				],
+			},
+		})
+		const client = new QueryClient()
+		client.setQueryData(projectKeys.detail(100), {
+			id: 100,
+			views: [{
+				id: 10,
+				done_bucket_id: 1003,
+			}],
+		})
+		const board = kanbanQuery(100, 10, {include_subprojects: true})
+		const unsubscribe = new QueryObserver(client, {
+			queryKey: board.queryKey,
+			queryFn: board.queryFn,
+		})
+			.subscribe(() => {})
+		await vi.waitFor(() => expect(client.getQueryData(board.queryKey)).toBeDefined())
+		sdk.projectViewBucketsTasksList.mockClear()
+		sdk.projectViewBucketsTasksList.mockReturnValue(new Promise(() => {}))
+		sdk.patchTasksRead.mockResolvedValue({data: {
+			id: 3,
+			project_id: 101,
+			done: true,
+		}})
+
+		await client.getMutationCache()
+			.build(client, updateTaskMutationOptions())
+			.execute({
+				id: 3,
+				done: true,
+			})
+
+		await vi.waitFor(() => expect(sdk.projectViewBucketsTasksList).toHaveBeenCalledOnce())
+		const data = client.getQueryData<BoardData>(board.queryKey)!
+		expect(data.buckets[0].tasks.map(task => task.id)).toEqual([3])
+		expect(data.buckets[1].tasks).toEqual([])
+		unsubscribe()
+	})
+
+	it('leaves an aggregate board alone when a sub-project task changes but its done state does not', async () => {
+		const {projectKeys} = await import('./projects')
+		sdk.projectViewBucketsTasksList.mockResolvedValue({
+			data: {
+				items: [
+					{
+						id: 1002,
+						tasks: [{
+							id: 3,
+							project_id: 101,
+							done: false,
+						}],
+						count: 1,
+					},
+					{
+						id: 1003,
+						tasks: [],
+						count: 0,
+					},
+				],
+			},
+		})
+		const client = new QueryClient()
+		client.setQueryData(projectKeys.detail(100), {
+			id: 100,
+			views: [{
+				id: 10,
+				done_bucket_id: 1003,
+			}],
+		})
+		const board = kanbanQuery(100, 10, {include_subprojects: true})
+		const unsubscribe = new QueryObserver(client, {
+			queryKey: board.queryKey,
+			queryFn: board.queryFn,
+		})
+			.subscribe(() => {})
+		await vi.waitFor(() => expect(client.getQueryData(board.queryKey)).toBeDefined())
+		sdk.projectViewBucketsTasksList.mockClear()
+		sdk.projectViewBucketsTasksList.mockReturnValue(new Promise(() => {}))
+		sdk.patchTasksRead.mockResolvedValue({data: {
+			id: 3,
+			title: 'renamed',
+			project_id: 101,
+			done: false,
+		}})
+
+		await client.getMutationCache()
+			.build(client, updateTaskMutationOptions())
+			.execute({
+				id: 3,
+				title: 'renamed',
+				done: false,
+			})
+
+		await new Promise(resolve => setTimeout(resolve, 0))
+		expect(sdk.projectViewBucketsTasksList).not.toHaveBeenCalled()
+		const data = client.getQueryData<BoardData>(board.queryKey)!
+		expect(data.buckets[0].tasks.map(task => task.id)).toEqual([3])
+		expect(data.buckets[1].tasks).toEqual([])
+		unsubscribe()
 	})
 
 	it('inserts a created card into a scrolled board without refetching it, while lists still refetch', async () => {

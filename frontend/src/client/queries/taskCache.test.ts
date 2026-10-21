@@ -185,6 +185,94 @@ describe('task cache reconciliation', () => {
 		expect(client.getQueryData<PaginatedTaskResponse>(list)).toEqual({items: [], total: 0})
 		expect(client.getQueryCache().getAll().map(query => query.queryKey)).toEqual([list])
 	})
+	describe('boards that include sub-project tasks', () => {
+		const seed = (): BoardData => ({
+			buckets: [normalizeBucket({
+				id: 5,
+				count: 2,
+				tasks: [
+					normalizeTask({
+						id: 1,
+						project_id: 100,
+						title: 'parent task',
+					}),
+					normalizeTask({
+						id: 3,
+						project_id: 101,
+						title: 'child task',
+					}),
+				],
+			})],
+			pages: {5: 1},
+		})
+		const aggregate = kanbanKeys.board(100, 10, {include_subprojects: true})
+
+		it('keeps a sub-project card on the board when its task is updated', () => {
+			const client = new QueryClient()
+			client.setQueryData(aggregate, seed())
+			replaceTaskEverywhere(client, {
+				id: 3,
+				project_id: 101,
+				title: 'child task',
+				done: true,
+			})
+			expect(client.getQueryData<BoardData>(aggregate)?.buckets[0]).toMatchObject({
+				count: 2,
+				tasks: [{id: 1}, {
+					id: 3,
+					done: true,
+				}],
+			})
+		})
+		it('still drops a moved task from a board that does not include sub-projects', () => {
+			const client = new QueryClient()
+			const plain = kanbanKeys.board(100, 10)
+			client.setQueryData(plain, seed())
+			replaceTaskEverywhere(client, {
+				id: 3,
+				project_id: 101,
+				title: 'child task',
+			})
+			expect(client.getQueryData<BoardData>(plain)?.buckets[0]).toMatchObject({
+				count: 1,
+				tasks: [{id: 1}],
+			})
+		})
+		it('drops a deleted sub-project task from the board', () => {
+			const client = new QueryClient()
+			client.setQueryData(aggregate, seed())
+			removeTaskEverywhere(client, 3)
+			expect(client.getQueryData<BoardData>(aggregate)?.buckets[0]).toMatchObject({
+				count: 1,
+				tasks: [{id: 1}],
+			})
+		})
+		it('only refetches an open board when the task changed project', async () => {
+			sdk.projectViewBucketsTasksList.mockResolvedValue({data: {items: [{
+				id: 5,
+				tasks: [],
+			}]}})
+			const client = new QueryClient()
+			const boards = [
+				kanbanQuery(100, 10, {include_subprojects: true}),
+				kanbanQuery(100, 11),
+			]
+			const unsubscribe = boards.map(({queryKey, queryFn}) =>
+				new QueryObserver(client, {queryKey, queryFn}).subscribe(() => {}))
+			await vi.waitFor(() => boards.forEach(board => expect(client.getQueryData(board.queryKey)).toBeDefined()))
+			expect(sdk.projectViewBucketsTasksList).toHaveBeenCalledTimes(2)
+			await invalidateTaskMembership(client, 3)
+			expect(sdk.projectViewBucketsTasksList).toHaveBeenCalledTimes(2)
+			await invalidateTaskMembership(client, 3, 'none', true)
+			// The server decides whether a task that left the subtree still belongs to the board.
+			expect(sdk.projectViewBucketsTasksList).toHaveBeenCalledTimes(3)
+			expect(sdk.projectViewBucketsTasksList).toHaveBeenLastCalledWith(expect.objectContaining({
+				query: expect.objectContaining({include_subprojects: true}),
+			}))
+			expect(client.getQueryState(boards[1].queryKey)?.isInvalidated).toBe(true)
+			unsubscribe.forEach(stop => stop())
+		})
+	})
 	describe('lists that include sub-project tasks', () => {
 		const aggregateScope = {project: 100, view: 10, params: {include_subprojects: true}}
 

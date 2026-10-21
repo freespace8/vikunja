@@ -14,6 +14,7 @@ description: freespace8 自托管 fork 的维护流程：同步上游、selfhost
   - MCP 上传附件：工具 `task_attachments_upload_link` 生成一次性上传链接，再 `curl -F files=@...` 到 `POST /api/v2/mcp/uploads/{ticket}`。
   - MCP 下载附件：工具 `task_attachments_download_link` 生成一次性下载链接，`GET /api/v2/mcp/downloads/{ticket}`；需要 token 有 `tasks_attachments.read_one`。
   - 父项目的列表、表格视图汇总所有未归档子项目的任务（v2 任务接口参数 `include_subprojects`）。
+  - 父项目的看板按列汇总子项目的任务：子项目任务按状态（完成 / 默认列）或列名落进父项目同名的列；拖到别的列时，在子项目自己的看板上移动，没有对应列则报错 10900。
   - Overview / 即将到期页面可切换列表、表格。
   - 列表、表格显示任务所在的看板列（`expand=buckets`）。
 - 开发进度记在 Vikunja 的「Vikunja」项目（VIK），规则写在项目描述里。
@@ -60,7 +61,7 @@ docker build --build-arg RELEASE_VERSION=$V -t vikunja-freespace8:$V-selfhost.$(
    - `curl -s http://127.0.0.1:3456/api/v1/info` 的 `version` 是新版本。
    - `docker logs vikunja` 里有 `Ran all migrations successfully`，没有 error。
    - MCP 上传和下载：新建一个临时任务，运行 `python3 -I scripts/prod_dl_check.py <任务 id> <任意本地文件>`。它从 `~/.claude.json` 读 token，不打印 token。要求两个工具都列出、上传 201、下载 200 且字节一致、重复使用 404、容器日志里没有票据。测完删掉临时任务。
-   - 动过任务列表时：`python3 -I scripts/prod_subproject_check.py <有子项目的父项目 id>`（只读）。列表和表格应汇总子项目的任务，看板只返回父项目自己的任务。
+   - 动过任务列表时：`python3 -I scripts/prod_subproject_check.py <有子项目的父项目 id>`（只读）。列表和表格应汇总子项目的任务，看板按列名汇总子项目的任务（脚本逐列核对 `count`，输出 OK / MISMATCH）。
    - 动过前端时，用浏览器打开相关页面看一眼。
 5. **记录**：在部署的提交上打 tag `deployed/YYYYMMDD-<sha>` 并推送。名字不以 `v` 开头，避免被 `git describe` 当成官方版本。
 

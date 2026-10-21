@@ -8,7 +8,8 @@ import {success} from '@/message'
 
 /**
  * Finds a project ID from elements at a given mouse position.
- * Searches through elements under the mouse and their parents for data-project-id attribute.
+ * Only sidebar items count: task cards carry a data-project-id too, and on a board that includes
+ * sub-projects their project differs from the board's.
  */
 function findProjectIdAtPosition(mouseX: number, mouseY: number): number | null {
 	// Validate coordinates are finite numbers (required by elementsFromPoint)
@@ -24,12 +25,7 @@ function findProjectIdAtPosition(mouseX: number, mouseY: number): number | null 
 			continue
 		}
 
-		const withProjectId =
-			el.dataset?.projectId != null
-				? el
-				: el.closest('[data-project-id]') as HTMLElement | null
-
-		const projectId = withProjectId?.dataset.projectId
+		const projectId = el.closest<HTMLElement>('li[data-project-id]')?.dataset.projectId
 		if (projectId) {
 			const parsed = parseInt(projectId, 10)
 			if (!Number.isNaN(parsed)) {

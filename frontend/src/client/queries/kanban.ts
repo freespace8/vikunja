@@ -53,6 +53,7 @@ export const kanbanKeys = {
 		[...kanbanKeys.view(project, view), params] as const,
 	projectOf: (key: QueryKey): number | undefined => key[1] as number | undefined,
 	viewOf: (key: QueryKey): number | undefined => key[2] as number | undefined,
+	paramsOf: (key: QueryKey): TaskFilterParams | undefined => key[3] as TaskFilterParams | undefined,
 }
 
 // Own key root: everything under kanbanKeys holds BoardData.
@@ -70,7 +71,7 @@ export function bucketsQuery(project: number, view: number) {
 	})
 }
 
-export function kanbanQuery(project: number, view: number, params: TaskFilterParams = {}) {
+export function kanbanQuery(project: number, view: number, params: TaskFilterParams = {}, enabled = true) {
 	return queryOptions({
 		queryKey: kanbanKeys.board(project, view, params),
 		queryFn: async ({signal}): Promise<BoardData> => {
@@ -85,6 +86,6 @@ export function kanbanQuery(project: number, view: number, params: TaskFilterPar
 				pages: Object.fromEntries(buckets.map(bucket => [bucket.id, 1])),
 			}
 		},
-		enabled: project !== 0 && view !== 0,
+		enabled: project !== 0 && view !== 0 && enabled,
 	})
 }

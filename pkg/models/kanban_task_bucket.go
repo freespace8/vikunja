@@ -42,6 +42,11 @@ type TaskBucket struct {
 	ProjectID     int64 `xorm:"-" json:"-" param:"project"`
 	Task          *Task `xorm:"-" json:"task" readOnly:"true" doc:"The task as it stands after the move, reflecting any done-state change."`
 
+	// allowSubprojectTask lets a task of a sub-project be moved through the parent's board.
+	// Unexported and untagged so the frozen v1 API can't bind it.
+	allowSubprojectTask bool
+	subprojectMove      *subprojectMove
+
 	web.Permissions `xorm:"-" json:"-"`
 	web.CRUDable    `xorm:"-" json:"-"`
 }
@@ -50,7 +55,17 @@ func (b *TaskBucket) TableName() string {
 	return "task_buckets"
 }
 
+// SetAllowSubprojectTask lets the move target a bucket of a parent project's view
+// for a task of one of its sub-projects. The task then moves on its own project's board.
+func (b *TaskBucket) SetAllowSubprojectTask() {
+	b.allowSubprojectTask = true
+}
+
 func (b *TaskBucket) CanUpdate(s *xorm.Session, a web.Auth) (bool, error) {
+	if err := b.redirectToSubproject(s, a); err != nil {
+		return false, err
+	}
+
 	bucket := Bucket{
 		ID:            b.BucketID,
 		ProjectID:     b.ProjectID,
@@ -259,6 +274,11 @@ func (b *TaskBucket) Update(s *xorm.Session, a web.Auth) (err error) {
 	b.Task = nil
 	b.Bucket = nil
 	err = updateTaskBucket(s, a, b)
+	if err != nil {
+		return err
+	}
+
+	err = b.restoreParentBucket(s)
 	if err != nil {
 		return err
 	}

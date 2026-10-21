@@ -66,10 +66,10 @@
 									</h2>
 									<span
 										v-if="bucket.limit > 0 || alwaysShowBucketTaskCount"
-										:class="{'is-max': bucket.limit > 0 && bucket.count >= bucket.limit}"
+										:class="{'is-max': isBucketFull(bucket)}"
 										class="limit"
 									>
-										{{ bucket.limit > 0 ? `${bucket.count}/${bucket.limit}` : bucket.count }}
+										{{ bucketCount(bucket) }}
 									</span>
 									<Dropdown
 										v-if="canWrite && !collapsedBuckets[bucket.id]"
@@ -199,12 +199,12 @@
 											</div>
 											<XButton
 												v-else
-												v-tooltip="bucket.limit > 0 && bucket.count >= bucket.limit ? $t('project.kanban.bucketLimitReached') : ''"
+												v-tooltip="isBucketFull(bucket) ? $t('project.kanban.bucketLimitReached') : ''"
 												class="is-fullwidth has-text-centered"
 												:shadow="false"
 												icon="plus"
 												variant="secondary"
-												:disabled="bucket.limit > 0 && bucket.count >= bucket.limit"
+												:disabled="isBucketFull(bucket)"
 												@click="toggleShowNewTaskInput(bucket.id)"
 											>
 												{{
@@ -293,6 +293,7 @@
 import {useKanban} from '@/composables/useKanban'
 import {bucketHasMore, kanbanKeys, type BucketResponse} from '@/client/queries/kanban'
 import {removeTaskFromBoard} from '@/client/queries/taskCache'
+import {invalidateAggregateBoards} from '@/client/queries/aggregateBoards'
 import {useUpdateTaskPositionMutation, useMoveTaskMutation} from '@/client/queries/taskMutations'
 import {
 	useCreateBucketMutation,
@@ -332,6 +333,7 @@ import {getSavedFilterIdFromProjectId, isSavedFilterProject} from '@/client/quer
 import {savedFilterQuery} from '@/client/queries/savedFilters'
 import {useCurrentProject} from '@/composables/useCurrentProject'
 import {useTaskDragToProject} from '@/composables/useTaskDragToProject'
+import {useIncludeSubprojects} from '@/composables/useIncludeSubprojects'
 import type {TaskFilterParams, TaskResponse} from '@/client/queries/tasks'
 import type {ProjectView} from '@/client/generated'
 import {createProjectViewUpdate, useUpdateProjectViewMutation} from '@/client/queries/projectViews'
@@ -484,8 +486,15 @@ function onHandleTouchMove(e: TouchEvent) {
 	}
 }
 
-const boardParams = computed(() => ({...params.value, filter_timezone: authStore.settings.timezone}))
-const board = useKanban(projectId, () => props.viewId, boardParams)
+// A parent project's board also shows the cards of its sub-projects. undefined: not known yet, so no request goes out
+// that would have to be repeated with the flag.
+const includeSubprojects = useIncludeSubprojects(() => projectId.value)
+const boardParams = computed(() => ({
+	...params.value,
+	filter_timezone: authStore.settings.timezone,
+	...(includeSubprojects.value ? {include_subprojects: true} : {}),
+}))
+const board = useKanban(projectId, () => props.viewId, boardParams, () => includeSubprojects.value !== undefined)
 const queryClient = useQueryClient()
 const buckets = board.buckets
 const createBucketMutation = useCreateBucketMutation()
@@ -508,7 +517,8 @@ function updateBucket(patch: BucketPatch, mutation = updateBucketMutation) {
 		bucket: {title: cached.title, limit: cached.limit, position: cached.position, ...patch},
 	})
 }
-const initialLoading = board.isLoading
+// The board does not load before it is known whether it includes sub-projects.
+const initialLoading = computed(() => board.isLoading.value || includeSubprojects.value === undefined)
 const projectIdWithFallback = computed<number>(() => project.value?.id || projectId.value)
 
 const taskLoading = computed(() => quickAddLoading.value || positionMutation.isPending.value)
@@ -569,6 +579,9 @@ async function updateTaskPosition(e: SortableEvent & {originalEvent?: MouseEvent
 			// A moved task stays in a pseudo-project board (favorites, saved filters) until the board is re-read.
 			if (project < 0) {
 				removeTaskFromBoard(queryClient, kanbanKeys.board(project, view, boardParams.value), task.id)
+			} else if (includeSubprojects.value) {
+				// The task may have moved into another sub-project, which the board still shows.
+				void board.refetch()
 			}
 		})
 		if (moved) return
@@ -576,8 +589,25 @@ async function updateTaskPosition(e: SortableEvent & {originalEvent?: MouseEvent
 		const index = bucket?.tasks.findIndex(task => task.id === Number(e.item.dataset.taskId)) ?? -1
 		if (!bucket || index < 0) return
 		const task = bucket.tasks[index]
-		const before = bucket.tasks[index - 1]
-		const after = bucket.tasks[index + 1]
+		if (includeSubprojects.value && task.project_id !== project) {
+			// A sub-project card has no position in this view, so it is only moved between columns.
+			if (bucket.id !== sourceBucket.value) {
+				await moveMutation.mutateAsync({
+					project,
+					view,
+					bucket: bucket.id,
+					task,
+				})
+			}
+			return
+		}
+		// Sub-project cards sit after the own ones, so a drop among them counts as a drop after the last own card.
+		const siblings = includeSubprojects.value
+			? bucket.tasks.filter(item => item.project_id === project)
+			: bucket.tasks
+		const position = siblings.findIndex(item => item.id === task.id)
+		const before = siblings[position - 1]
+		const after = siblings[position + 1]
 		if (bucket.id !== sourceBucket.value) {
 			const result = await moveMutation.mutateAsync({project, view, bucket: bucket.id, task})
 			if (result.bucket_id !== undefined && result.bucket_id !== bucket.id) return
@@ -589,8 +619,8 @@ async function updateTaskPosition(e: SortableEvent & {originalEvent?: MouseEvent
 		})
 
 		// Dropping at the top gives position 0, which the next task may already have.
-		if (index === 0 && after?.position === 0) {
-			const afterAfter = bucket.tasks[index + 2]
+		if (position === 0 && after?.position === 0) {
+			const afterAfter = siblings[position + 2]
 			await positionMutation.mutateAsync({
 				taskId: after.id,
 				project_view_id: view,
@@ -628,7 +658,7 @@ async function addTaskToBucket(bucketId: number) {
 	scrollTaskContainerToTop(bucketId)
 
 	const bucket = getBucketById(bucketId)
-	if (bucket && bucket.limit && bucket.count >= bucket.limit) {
+	if (!includeSubprojects.value && bucket && bucket.limit && bucket.count >= bucket.limit) {
 		toggleShowNewTaskInput(bucketId)
 	}
 }
@@ -652,6 +682,7 @@ async function createNewBucket() {
 		bucket: {title: newBucketTitle.value},
 	})
 	newBucketTitle.value = ''
+	await refetchAggregateBoard()
 }
 
 function deleteBucketModal(bucketId: number) {
@@ -696,6 +727,7 @@ async function saveBucketTitle(bucketId: number, bucketTitle: string) {
 		title: bucketTitle,
 	}, saveBucketTitleMutation)
 	bucketTitleEditable.value = false
+	await refetchAggregateBoard()
 }
 
 function updateBuckets(value: BucketResponse[]) {
@@ -746,6 +778,8 @@ async function updateBucketPosition(e: { item: HTMLElement }) {
 				bucketAfter !== null ? bucketAfter.position : null,
 			),
 		})
+		// Without a default bucket of its own, the first bucket is where the sub-project cards without a match go.
+		await refetchAggregateBoard()
 	} catch { /* Mutation reports the error. */ } finally { board.endDrag() }
 }
 
@@ -776,8 +810,31 @@ async function setBucketLimit(bucketId: number, now: boolean = false) {
 	setBucketLimitCancel.value = setTimeout(saveBucketLimit, 2500, bucketId, limit)
 }
 
+// Sub-project cards don't count against a bucket's limit on the server, so only the server can tell whether
+// a column is full; the client lets the move through and shows its refusal.
+function isBucketFull(bucket: BucketResponse) {
+	return !includeSubprojects.value && bucket.limit > 0 && bucket.count >= bucket.limit
+}
+
+// A renamed, new, moved, done or default bucket changes where the cards of the sub-projects land.
+async function refetchAggregateBoard() {
+	if (includeSubprojects.value) await board.refetch()
+}
+
+// A project view update does not mark any board stale, and the done or default bucket of this board
+// may be the one a parent board maps the cards of this project by.
+async function bucketRolesChanged() {
+	void invalidateAggregateBoards(queryClient)
+	await refetchAggregateBoard()
+}
+
+function bucketCount(bucket: BucketResponse) {
+	return bucket.limit > 0 && !includeSubprojects.value ? `${bucket.count}/${bucket.limit}` : bucket.count
+}
+
 function shouldAcceptDrop(bucket: BucketResponse) {
 	return (
+		includeSubprojects.value === true ||
 		// When dragging from a bucket who has its limit reached, dragging should still be possible
 		bucket.id === sourceBucket.value ||
 		// If there is no limit set, dragging & dropping should always work
@@ -818,7 +875,7 @@ function toggleDefaultBucket(bucket: BucketResponse) {
 		projectId: projectId.value,
 		viewId: currentView.id,
 		view: createProjectViewUpdate({...currentView, default_bucket_id: defaultBucketId}),
-	})
+	}, {onSuccess: bucketRolesChanged})
 }
 
 function toggleDoneBucket(bucket: BucketResponse) {
@@ -834,7 +891,7 @@ function toggleDoneBucket(bucket: BucketResponse) {
 		projectId: projectId.value,
 		viewId: currentView.id,
 		view: createProjectViewUpdate({...currentView, done_bucket_id: doneBucketId}),
-	})
+	}, {onSuccess: bucketRolesChanged})
 }
 
 function collapseBucket(bucket: BucketResponse) {

@@ -253,9 +253,9 @@ func TestHumaTaskCollection_Buckets(t *testing.T) {
 }
 
 // TestHumaTaskCollection_IncludeSubprojects covers include_subprojects on the
-// view-scoped flat endpoint: the project's list view then also returns the
-// tasks of its sub-projects, while the buckets endpoint and link shares keep
-// their single-project scope.
+// view-scoped flat endpoint, where the project's list view then also returns
+// the tasks of its sub-projects, and on the buckets endpoint, where they land
+// in the parent's buckets. Link shares keep their single-project scope.
 func TestHumaTaskCollection_IncludeSubprojects(t *testing.T) {
 	e, err := setupTestEnv()
 	require.NoError(t, err)
@@ -326,16 +326,38 @@ func TestHumaTaskCollection_IncludeSubprojects(t *testing.T) {
 		assert.Len(t, decodePaginatedTaskItems(t, rec), 3)
 	})
 
-	t.Run("the buckets endpoint ignores the flag", func(t *testing.T) {
-		kanbanViewID := viewIDOfKind(parentID, "kanban")
-		rec := humaRequest(t, e, http.MethodGet,
-			fmt.Sprintf("/api/v2/projects/%d/views/%d/buckets/tasks?include_subprojects=true", parentID, kanbanViewID),
-			"", tok, "")
+	t.Run("the buckets endpoint places sub-project tasks in the parent's buckets", func(t *testing.T) {
+		k := kanbanProjects{
+			t:   t,
+			e:   e,
+			tok: tok,
+		}
+		parentView := viewIDOfKind(parentID, "kanban")
+		childView := viewIDOfKind(childID, "kanban")
+		grandchildView := viewIDOfKind(grandchildID, "kanban")
+		parentPath := fmt.Sprintf("/api/v2/projects/%d/views/%d/buckets/tasks", parentID, parentView)
+		childBoard := k.board(childID, childView, "")
+		grandchildBoard := k.board(grandchildID, grandchildView, "")
+		k.move(childID, childView, childBoard["Doing"].ID, childBoard["To-Do"].taskID(t, "webchild task"))
+		k.move(grandchildID, grandchildView, grandchildBoard["Done"].ID, grandchildBoard["To-Do"].taskID(t, "webgrandchild task"))
+
+		rec := humaRequest(t, e, http.MethodGet, parentPath, "", tok, "")
 		require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
-		body := rec.Body.String()
-		assert.Contains(t, body, "webparent task")
-		assert.NotContains(t, body, "webchild task")
-		assert.NotContains(t, body, "webgrandchild task")
+		assert.NotContains(t, rec.Body.String(), "webchild task")
+		assert.NotContains(t, rec.Body.String(), "webgrandchild task")
+
+		board := k.board(parentID, parentView, "?include_subprojects=true")
+		assert.Equal(t, []string{"webparent task"}, board["To-Do"].taskTitles())
+		assert.Equal(t, []string{"webchild task"}, board["Doing"].taskTitles())
+		assert.Equal(t, []string{"webgrandchild task"}, board["Done"].taskTitles())
+		assert.EqualValues(t, 1, board["Doing"].Count)
+
+		flat := humaRequest(t, e, http.MethodGet,
+			fmt.Sprintf("/api/v2/projects/%d/views/%d/tasks?include_subprojects=true&filter=bucket_id%%20%%3D%%20%d", parentID, parentView, board["Doing"].ID),
+			"", tok, "")
+		require.Equal(t, http.StatusOK, flat.Code, "body: %s", flat.Body.String())
+		assert.Len(t, decodePaginatedTaskItems(t, flat), 1)
+		assert.Contains(t, flat.Body.String(), "webchild task")
 	})
 
 	t.Run("a foreign project stays forbidden", func(t *testing.T) {
