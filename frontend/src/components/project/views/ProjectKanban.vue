@@ -69,7 +69,7 @@
 										:class="{'is-max': isBucketFull(bucket)}"
 										class="limit"
 									>
-										{{ bucket.limit > 0 && !includeSubprojects ? `${bucket.count}/${bucket.limit}` : bucket.count }}
+										{{ bucketCount(bucket) }}
 									</span>
 									<Dropdown
 										v-if="canWrite && !collapsedBuckets[bucket.id]"
@@ -293,6 +293,7 @@
 import {useKanban} from '@/composables/useKanban'
 import {bucketHasMore, kanbanKeys, type BucketResponse} from '@/client/queries/kanban'
 import {removeTaskFromBoard} from '@/client/queries/taskCache'
+import {invalidateAggregateBoards} from '@/client/queries/aggregateBoards'
 import {useUpdateTaskPositionMutation, useMoveTaskMutation} from '@/client/queries/taskMutations'
 import {
 	useCreateBucketMutation,
@@ -516,7 +517,8 @@ function updateBucket(patch: BucketPatch, mutation = updateBucketMutation) {
 		bucket: {title: cached.title, limit: cached.limit, position: cached.position, ...patch},
 	})
 }
-const initialLoading = board.isLoading
+// The board does not load before it is known whether it includes sub-projects.
+const initialLoading = computed(() => board.isLoading.value || includeSubprojects.value === undefined)
 const projectIdWithFallback = computed<number>(() => project.value?.id || projectId.value)
 
 const taskLoading = computed(() => quickAddLoading.value || positionMutation.isPending.value)
@@ -587,13 +589,20 @@ async function updateTaskPosition(e: SortableEvent & {originalEvent?: MouseEvent
 		const index = bucket?.tasks.findIndex(task => task.id === Number(e.item.dataset.taskId)) ?? -1
 		if (!bucket || index < 0) return
 		const task = bucket.tasks[index]
-		if (includeSubprojects.value) {
-			// Sub-project cards have no position in this view, so no card is reordered here, only moved between columns.
-			if (bucket.id !== sourceBucket.value) await moveMutation.mutateAsync({project, view, bucket: bucket.id, task})
+		if (includeSubprojects.value && task.project_id !== project) {
+			// A sub-project card has no position in this view, so it is only moved between columns.
+			if (bucket.id !== sourceBucket.value) {
+				await moveMutation.mutateAsync({project, view, bucket: bucket.id, task})
+			}
 			return
 		}
-		const before = bucket.tasks[index - 1]
-		const after = bucket.tasks[index + 1]
+		// Sub-project cards sit after the own ones, so a drop among them counts as a drop after the last own card.
+		const siblings = includeSubprojects.value
+			? bucket.tasks.filter(item => item.project_id === project)
+			: bucket.tasks
+		const position = siblings.findIndex(item => item.id === task.id)
+		const before = siblings[position - 1]
+		const after = siblings[position + 1]
 		if (bucket.id !== sourceBucket.value) {
 			const result = await moveMutation.mutateAsync({project, view, bucket: bucket.id, task})
 			if (result.bucket_id !== undefined && result.bucket_id !== bucket.id) return
@@ -605,8 +614,8 @@ async function updateTaskPosition(e: SortableEvent & {originalEvent?: MouseEvent
 		})
 
 		// Dropping at the top gives position 0, which the next task may already have.
-		if (index === 0 && after?.position === 0) {
-			const afterAfter = bucket.tasks[index + 2]
+		if (position === 0 && after?.position === 0) {
+			const afterAfter = siblings[position + 2]
 			await positionMutation.mutateAsync({
 				taskId: after.id,
 				project_view_id: view,
@@ -667,6 +676,7 @@ async function createNewBucket() {
 		view: props.viewId,
 		bucket: {title: newBucketTitle.value},
 	})
+	await refetchAggregateBoard()
 	newBucketTitle.value = ''
 }
 
@@ -763,6 +773,8 @@ async function updateBucketPosition(e: { item: HTMLElement }) {
 				bucketAfter !== null ? bucketAfter.position : null,
 			),
 		})
+		// Without a default bucket of its own, the first bucket is where the sub-project cards without a match go.
+		await refetchAggregateBoard()
 	} catch { /* Mutation reports the error. */ } finally { board.endDrag() }
 }
 
@@ -799,9 +811,20 @@ function isBucketFull(bucket: BucketResponse) {
 	return !includeSubprojects.value && bucket.limit > 0 && bucket.count >= bucket.limit
 }
 
-// A renamed, done or default bucket changes where the cards of the sub-projects land.
+// A renamed, new, moved, done or default bucket changes where the cards of the sub-projects land.
 async function refetchAggregateBoard() {
 	if (includeSubprojects.value) await board.refetch()
+}
+
+// A project view update does not mark any board stale, and the done or default bucket of this board
+// may be the one a parent board maps the cards of this project by.
+async function bucketRolesChanged() {
+	void invalidateAggregateBoards(queryClient)
+	await refetchAggregateBoard()
+}
+
+function bucketCount(bucket: BucketResponse) {
+	return bucket.limit > 0 && !includeSubprojects.value ? `${bucket.count}/${bucket.limit}` : bucket.count
 }
 
 function shouldAcceptDrop(bucket: BucketResponse) {
@@ -847,7 +870,7 @@ function toggleDefaultBucket(bucket: BucketResponse) {
 		projectId: projectId.value,
 		viewId: currentView.id,
 		view: createProjectViewUpdate({...currentView, default_bucket_id: defaultBucketId}),
-	}, {onSuccess: refetchAggregateBoard})
+	}, {onSuccess: bucketRolesChanged})
 }
 
 function toggleDoneBucket(bucket: BucketResponse) {
@@ -863,7 +886,7 @@ function toggleDoneBucket(bucket: BucketResponse) {
 		projectId: projectId.value,
 		viewId: currentView.id,
 		view: createProjectViewUpdate({...currentView, done_bucket_id: doneBucketId}),
-	}, {onSuccess: refetchAggregateBoard})
+	}, {onSuccess: bucketRolesChanged})
 }
 
 function collapseBucket(bucket: BucketResponse) {
