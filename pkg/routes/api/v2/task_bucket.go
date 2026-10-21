@@ -39,7 +39,10 @@ func RegisterTaskBucketRoutes(api huma.API) {
 		Summary:     "Place a task in a kanban bucket",
 		Description: "Moves a task into the given bucket of a project's kanban view. Requires write access to the project. " +
 			"Idempotent: re-sending the same bucket is a no-op. Side effects: moving a task into the view's done bucket marks it done (and out of it un-marks it); a repeating task moved into the done bucket is reopened and routed back to the default bucket instead. " +
-			"Moving a task into a bucket that is already at its task limit is rejected with 412. A bucket that does not resolve under the project and view in the path is rejected with 404.",
+			"Moving a task into a bucket that is already at its task limit is rejected with 412. A bucket that does not resolve under the project and view in the path is rejected with 404. " +
+			"A task of a non-archived sub-project can be moved through the parent project's manual kanban view: it moves on its own project's first manual kanban view, into the bucket with the same role (done or default) or the same title, and needs write access to its own project. " +
+			"The response then carries the parent's ids: project_view_id and bucket_id are those of the parent view and the parent bucket the task now shows in (the default bucket when a repeating task is routed back), bucket is that parent bucket with its count taken from the sub-project's bucket, not the parent column's total, and task.project_id stays the task's own project. " +
+			"Rejected with 400 and code 10900 when the task's project has no matching bucket or no manual kanban view.",
 		Method: http.MethodPut,
 		Path:   "/projects/{project}/views/{view}/buckets/{bucket}/tasks",
 		Tags:   tags,
@@ -62,6 +65,7 @@ func taskBucketUpdate(ctx context.Context, in *struct {
 	tb.ProjectID = in.ProjectID  // URL wins over body
 	tb.ProjectViewID = in.ViewID // URL wins over body
 	tb.BucketID = in.BucketID    // URL wins over body
+	tb.SetAllowSubprojectTask()
 	if err := handler.DoUpdate(ctx, tb, a); err != nil {
 		return nil, translateDomainError(err)
 	}

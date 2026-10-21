@@ -18,6 +18,7 @@ package models
 
 import (
 	"fmt"
+	"net/http"
 	"sort"
 	"strings"
 
@@ -325,4 +326,163 @@ func (sb *subprojectBuckets) takeBucketFilter(opts *taskSearchOptions) {
 		opts.bucketCond = sb.cond(bucketID)
 		return
 	}
+}
+
+// ErrSubprojectBucketNotFound represents an error where a sub-project task is moved to a parent
+// bucket that has no counterpart on the task's own project board.
+type ErrSubprojectBucketNotFound struct {
+	TaskID      int64
+	ProjectID   int64
+	BucketTitle string
+}
+
+// IsErrSubprojectBucketNotFound checks if an error is ErrSubprojectBucketNotFound.
+func IsErrSubprojectBucketNotFound(err error) bool {
+	_, ok := err.(ErrSubprojectBucketNotFound)
+	return ok
+}
+
+func (err ErrSubprojectBucketNotFound) Error() string {
+	return fmt.Sprintf("The task's project has no matching bucket [TaskID: %d, ProjectID: %d, BucketTitle: %s]", err.TaskID, err.ProjectID, err.BucketTitle)
+}
+
+// ErrCodeSubprojectBucketNotFound holds the unique world-error code of this error.
+// It sits well outside the 10001-10007 run of the upstream kanban errors so that a code added upstream can't collide.
+const ErrCodeSubprojectBucketNotFound = 10900
+
+// HTTPError holds the http error description
+func (err ErrSubprojectBucketNotFound) HTTPError() web.HTTPError {
+	return web.HTTPError{
+		HTTPCode: http.StatusBadRequest,
+		Code:     ErrCodeSubprojectBucketNotFound,
+		Message:  "The task's own project has no bucket that matches this one, so the task can't be moved here.",
+	}
+}
+
+// subprojectMove remembers where a sub-project task was dropped on the parent board.
+type subprojectMove struct {
+	parentProjectID int64
+	parentViewID    int64
+	buckets         *subprojectBuckets
+}
+
+// redirectToSubproject rewrites a move on the parent's board of a sub-project task into the
+// equivalent move on the task's own project board, so the permission checks, the bucket limit and the
+// done logic that follow are those of the sub-project. Everything else is left to the regular checks, which
+// then deny, or report their own error, as before.
+func (b *TaskBucket) redirectToSubproject(s *xorm.Session, a web.Auth) error {
+	if !b.allowSubprojectTask {
+		return nil
+	}
+	if _, isShare := a.(*LinkSharing); isShare {
+		return nil
+	}
+
+	parentBucket := &Bucket{
+		ID:            b.BucketID,
+		ProjectID:     b.ProjectID,
+		ProjectViewID: b.ProjectViewID,
+	}
+	view, err := parentBucket.getOwnView(s)
+	if err != nil || view.ProjectID < 1 || view.ViewKind != ProjectViewKindKanban || view.BucketConfigurationMode != BucketConfigurationModeManual {
+		return nil
+	}
+
+	task, err := GetTaskByIDSimple(s, b.TaskID)
+	if err != nil || task.ProjectID == view.ProjectID {
+		return nil
+	}
+
+	descendants, err := subprojectIDs(s, a, view.ProjectID)
+	if err != nil {
+		return err
+	}
+	isDescendant := false
+	for _, id := range descendants {
+		if id == task.ProjectID {
+			isDescendant = true
+			break
+		}
+	}
+	if !isDescendant {
+		return nil
+	}
+
+	canRead, _, err := view.CanRead(s, a)
+	if err != nil || !canRead {
+		return err
+	}
+
+	// getOwnView only returns the view, the bucket itself is needed for its title.
+	parentBucket, err = getBucketByID(s, b.BucketID)
+	if err != nil {
+		return err
+	}
+
+	sb, err := loadSubprojectBuckets(s, view, []int64{task.ProjectID})
+	if err != nil {
+		return err
+	}
+	var childBucketID int64
+	var found bool
+	var child *bucketSet
+	if sb != nil {
+		child = sb.children[task.ProjectID]
+	}
+	if child != nil {
+		childBucketID, found = sb.parent.childBucketFor(child, parentBucket)
+	}
+	if !found {
+		// Only tell users who could move the task on its own board that there is no counterpart.
+		canWrite, err := canWriteBucketProject(s, task.ProjectID, a)
+		if err != nil || !canWrite {
+			return err
+		}
+		canWrite, err = (&Task{ID: task.ID}).CanWrite(s, a)
+		if err != nil || !canWrite {
+			return err
+		}
+		return ErrSubprojectBucketNotFound{
+			TaskID:      task.ID,
+			ProjectID:   task.ProjectID,
+			BucketTitle: parentBucket.Title,
+		}
+	}
+
+	b.subprojectMove = &subprojectMove{
+		parentProjectID: view.ProjectID,
+		parentViewID:    view.ID,
+		buckets:         sb,
+	}
+	b.ProjectID = task.ProjectID
+	b.ProjectViewID = child.view.ID
+	b.BucketID = childBucketID
+	return nil
+}
+
+// restoreParentBucket gives the response the ids of the parent board, as for one of its own
+// tasks: the bucket is the parent bucket the task now shows in, which differs from the drop
+// target when the move was rerouted (a repeating task dropped into done).
+func (b *TaskBucket) restoreParentBucket(s *xorm.Session) error {
+	move := b.subprojectMove
+	if move == nil {
+		return nil
+	}
+
+	b.ProjectID = move.parentProjectID
+	b.ProjectViewID = move.parentViewID
+	b.BucketID = move.buckets.parentBucketFor(b.BucketID)
+	b.subprojectMove = nil
+
+	if b.Bucket == nil {
+		return nil
+	}
+	parentBucket, err := getBucketByID(s, b.BucketID)
+	if err != nil {
+		return err
+	}
+	// Left as the sub-project bucket's count: the parent column's total isn't computed here.
+	parentBucket.Count = b.Bucket.Count
+	b.Bucket = parentBucket
+	return nil
 }
