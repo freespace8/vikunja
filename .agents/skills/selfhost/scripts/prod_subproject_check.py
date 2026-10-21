@@ -55,14 +55,16 @@ def parent_bucket_for(child_view, child_buckets, child_bucket, parent_view, pare
         return parent_view["done_bucket_id"]
     if child_bucket["id"] == default_bucket(child_view, child_buckets):
         return default_bucket(parent_view, parent_buckets)
-    title = child_bucket["title"].strip().casefold()
-    for bucket in sorted(parent_buckets, key=lambda b: (b.get("position", 0), b["id"])):
-        if bucket["title"].strip().casefold() == title:
-            return bucket["id"]
+    # As the server matches: trimmed and lowercased, and an empty title matches nothing.
+    title = child_bucket["title"].strip().lower()
+    if title:
+        for bucket in sorted(parent_buckets, key=lambda b: (b.get("position", 0), b["id"])):
+            if bucket["title"].strip().lower() == title:
+                return bucket["id"]
     return default_bucket(parent_view, parent_buckets)
 
 
-def check_kanban(view, descendants):
+def check_kanban(descendants):
     parent_view = home_view(PARENT)
     if parent_view is None:
         print("kanban: the parent has no manual kanban view, skipped")
@@ -122,7 +124,7 @@ for kind in ("list", "table", "kanban"):
         continue
     if kind == "kanban":
         try:
-            check_kanban(view, desc)
+            check_kanban(desc)
         except Exception as e:  # noqa: BLE001
             print("kanban check skipped:", e)
         continue
