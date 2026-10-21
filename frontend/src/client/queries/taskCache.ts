@@ -3,6 +3,7 @@ import type {Task} from '@/client/generated'
 import {mapTasksDeep, mergeTask, removeTask} from '@/helpers/task'
 import {normalizeTask, taskKeys, type PaginatedTaskResponse, type TaskResponse} from './tasks'
 import {kanbanKeys, type BoardData} from './kanban'
+import {isAggregateBoardKey, refetchAggregateBoards} from './aggregateBoards'
 import {totalPagesFor} from './pagination'
 
 // Applies `update` to every cached copy of task `id` (detail, lists, boards, nested relations),
@@ -105,6 +106,7 @@ function removeTaskFromCollections(client: QueryClient, id: number, removal: Col
 	}
 	for (const [key, board] of client.getQueriesData<BoardData>({queryKey: kanbanKeys.all})) {
 		if (!board || !inScope(kanbanKeys.projectOf(key))) continue
+		if (movedTo !== undefined && isAggregateBoardKey(key)) continue
 		const next = removeFromBoard(board, id, remove)
 		if (next) client.setQueryData(key, next)
 	}
@@ -172,6 +174,7 @@ export async function invalidateTaskMembership(
 			refetchType: 'active',
 			predicate: query => isAggregateKey(query.queryKey),
 		})) : []),
+		...(changedProject ? [refetchAggregateBoards(client)] : []),
 		// Refetching a board returns only the first page per bucket, so mutations patch it instead of refetching.
 		client.invalidateQueries({queryKey: kanbanKeys.all, refetchType: 'none'}),
 		...(id === undefined ? [] : [client.invalidateQueries({queryKey: [...taskKeys.details, id], refetchType})]),
