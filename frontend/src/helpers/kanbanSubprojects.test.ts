@@ -3,7 +3,12 @@ import {normalizeBucket} from '@/client/queries/kanban'
 import {normalizeTask} from '@/client/queries/tasks'
 import {sortAggregateBucketTasks, sortAggregateBuckets} from './kanbanSubprojects'
 
-const task = (id: number, project_id: number, position = 0) => normalizeTask({id, project_id, position, title: `T${id}`})
+const task = (id: number, project_id: number, position = 0) => normalizeTask({
+	id,
+	project_id,
+	position,
+	title: `T${id}`,
+})
 const ids = (tasks: {id: number}[]) => tasks.map(item => item.id)
 
 describe('sortAggregateBucketTasks', () => {
@@ -24,9 +29,20 @@ describe('sortAggregateBucketTasks', () => {
 		expect(ids(tasks)).toEqual([9, 1])
 	})
 	it('sorts every bucket of a board and keeps the other bucket fields', () => {
-		const bucket = normalizeBucket({id: 3, title: 'Doing', count: 9, limit: 2, tasks: [task(9, 101), task(1, 100)]})
+		const bucket = normalizeBucket({
+			id: 3,
+			title: 'Doing',
+			count: 9,
+			limit: 2,
+			tasks: [task(9, 101), task(1, 100)],
+		})
 		const [sorted] = sortAggregateBuckets([bucket], 100)
 		expect(ids(sorted.tasks)).toEqual([1, 9])
-		expect(sorted).toMatchObject({id: 3, title: 'Doing', count: 9, limit: 2})
+		expect(sorted).toMatchObject({
+			id: 3,
+			title: 'Doing',
+			count: 9,
+			limit: 2,
+		})
 	})
 })

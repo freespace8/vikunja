@@ -28,7 +28,7 @@ import {assertClientRequestContext, captureClientRequestContext, isRequestContex
 import {contextMutationOptions} from './contextMutation'
 import {normalizeTask, taskKeys, type PaginatedTaskResponse, type TaskResponse} from './tasks'
 import {bucketKeys, bucketsQuery, kanbanKeys, normalizeBucket, type BoardData} from './kanban'
-import {syncAggregateBoardsAfterMove} from './aggregateBoards'
+import {isAggregateBoardKey, refetchAggregateBoards, syncAggregateBoardsAfterMove} from './aggregateBoards'
 import {
 	cachedTaskCopies,
 	changesTaskProject,
@@ -88,10 +88,16 @@ function taskPatchBody(task: Task): JsonPatchOp[] {
 
 async function reconcileDoneBuckets(client: QueryClient, task: TaskResponse) {
 	const handled = new Set<number>()
+	let aggregateBoardHoldsTask = false
 	for (const [key, board] of client.getQueriesData<BoardData>({queryKey: kanbanKeys.all})) {
 		const project = kanbanKeys.projectOf(key)
 		const viewId = kanbanKeys.viewOf(key)
 		if (!board || project === undefined || viewId === undefined) continue
+		// The column of a sub-project's card follows the done bucket of its own project, which only the server maps.
+		if (isAggregateBoardKey(key) && task.project_id !== project) {
+			aggregateBoardHoldsTask ||= board.buckets.some(bucket => bucket.tasks.some(item => item.id === task.id))
+			continue
+		}
 		const view = getCachedProject(project, client)?.views?.find(item => item.id === viewId)
 		if (!view?.done_bucket_id) continue
 		const source = board.buckets.find(bucket => bucket.tasks.some(item => item.id === task.id))
@@ -108,6 +114,7 @@ async function reconcileDoneBuckets(client: QueryClient, task: TaskResponse) {
 		client.setQueryData(key, {...board, buckets: buckets.map(normalizeBucket)})
 		reconcileTaskBuckets(client, {project, view: viewId, bucket: target, task: task.id})
 	}
+	if (aggregateBoardHoldsTask) void refetchAggregateBoards(client, task.project_id)
 	await reconcileDoneBucketsWithoutBoard(client, task, handled)
 }
 

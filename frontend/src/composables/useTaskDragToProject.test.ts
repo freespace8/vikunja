@@ -3,7 +3,10 @@ import {afterEach, beforeEach, describe, expect, it, vi} from 'vitest'
 const updateTask = vi.hoisted(() => ({mutateAsync: vi.fn()}))
 vi.mock('@/client/queries/taskMutations', () => ({useUpdateTaskMutation: () => updateTask}))
 vi.mock('@/composables/useProjects', () => ({useProjects: () => ({projects: {2: {title: 'Sidebar project'}}})}))
-vi.mock('@/message', () => ({success: vi.fn(), error: vi.fn()}))
+vi.mock('@/message', () => ({
+	success: vi.fn(),
+	error: vi.fn(),
+}))
 vi.mock('vue-i18n', async importOriginal => ({
 	...await importOriginal<typeof import('vue-i18n')>(),
 	useI18n: () => ({t: (key: string) => key}),
@@ -13,8 +16,15 @@ import type {TaskResponse} from '@/client/queries/tasks'
 import {useTaskDragState} from './useTaskDragState'
 import {useTaskDragToProject} from './useTaskDragToProject'
 
-const dragged = {id: 5, title: 'Dragged', project_id: 1} as TaskResponse
-const dropEvent = {originalEvent: new MouseEvent('mouseup', {clientX: 10, clientY: 20})}
+const dragged = {
+	id: 5,
+	title: 'Dragged',
+	project_id: 1,
+} as TaskResponse
+const dropEvent = {originalEvent: new MouseEvent('mouseup', {
+	clientX: 10,
+	clientY: 20,
+})}
 
 function element(tag: string, projectId: number, child?: HTMLElement) {
 	const el = document.createElement(tag)
@@ -42,8 +52,14 @@ describe('useTaskDragToProject', () => {
 
 		const result = await useTaskDragToProject().handleTaskDropToProject(dropEvent)
 
-		expect(result).toEqual({moved: true, targetProjectId: 2})
-		expect(updateTask.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({id: 5, project_id: 2}))
+		expect(result).toEqual({
+			moved: true,
+			targetProjectId: 2,
+		})
+		expect(updateTask.mutateAsync).toHaveBeenCalledWith(expect.objectContaining({
+			id: 5,
+			project_id: 2,
+		}))
 	})
 
 	it('ignores a card of another project under the pointer', async () => {
@@ -52,7 +68,10 @@ describe('useTaskDragToProject', () => {
 
 		const result = await useTaskDragToProject().handleTaskDropToProject(dropEvent)
 
-		expect(result).toEqual({moved: false, targetProjectId: null})
+		expect(result).toEqual({
+			moved: false,
+			targetProjectId: null,
+		})
 		expect(updateTask.mutateAsync).not.toHaveBeenCalled()
 	})
 
@@ -61,6 +80,9 @@ describe('useTaskDragToProject', () => {
 
 		const result = await useTaskDragToProject().handleTaskDropToProject(dropEvent)
 
-		expect(result).toEqual({moved: true, targetProjectId: 2})
+		expect(result).toEqual({
+			moved: true,
+			targetProjectId: 2,
+		})
 	})
 })

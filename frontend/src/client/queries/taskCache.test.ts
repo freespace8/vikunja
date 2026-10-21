@@ -191,8 +191,16 @@ describe('task cache reconciliation', () => {
 				id: 5,
 				count: 2,
 				tasks: [
-					normalizeTask({id: 1, project_id: 100, title: 'parent task'}),
-					normalizeTask({id: 3, project_id: 101, title: 'child task'}),
+					normalizeTask({
+						id: 1,
+						project_id: 100,
+						title: 'parent task',
+					}),
+					normalizeTask({
+						id: 3,
+						project_id: 101,
+						title: 'child task',
+					}),
 				],
 			})],
 			pages: {5: 1},
@@ -202,27 +210,48 @@ describe('task cache reconciliation', () => {
 		it('keeps a sub-project card on the board when its task is updated', () => {
 			const client = new QueryClient()
 			client.setQueryData(aggregate, seed())
-			replaceTaskEverywhere(client, {id: 3, project_id: 101, title: 'child task', done: true})
+			replaceTaskEverywhere(client, {
+				id: 3,
+				project_id: 101,
+				title: 'child task',
+				done: true,
+			})
 			expect(client.getQueryData<BoardData>(aggregate)?.buckets[0]).toMatchObject({
 				count: 2,
-				tasks: [{id: 1}, {id: 3, done: true}],
+				tasks: [{id: 1}, {
+					id: 3,
+					done: true,
+				}],
 			})
 		})
 		it('still drops a moved task from a board that does not include sub-projects', () => {
 			const client = new QueryClient()
 			const plain = kanbanKeys.board(100, 10)
 			client.setQueryData(plain, seed())
-			replaceTaskEverywhere(client, {id: 3, project_id: 101, title: 'child task'})
-			expect(client.getQueryData<BoardData>(plain)?.buckets[0]).toMatchObject({count: 1, tasks: [{id: 1}]})
+			replaceTaskEverywhere(client, {
+				id: 3,
+				project_id: 101,
+				title: 'child task',
+			})
+			expect(client.getQueryData<BoardData>(plain)?.buckets[0]).toMatchObject({
+				count: 1,
+				tasks: [{id: 1}],
+			})
 		})
 		it('drops a deleted sub-project task from the board', () => {
 			const client = new QueryClient()
 			client.setQueryData(aggregate, seed())
 			removeTaskEverywhere(client, 3)
-			expect(client.getQueryData<BoardData>(aggregate)?.buckets[0]).toMatchObject({count: 1, tasks: [{id: 1}]})
+			expect(client.getQueryData<BoardData>(aggregate)?.buckets[0]).toMatchObject({
+				count: 1,
+				tasks: [{id: 1}],
+			})
 		})
 		it('only refetches an open board when the task changed project', async () => {
-			sdk.projectViewBucketsTasksList.mockResolvedValue({data: {items: [{id: 5, tasks: []}]}})
+			sdk.projectViewBucketsTasksList.mockResolvedValue({data: {items: [{
+				id: 5,
+				tasks: [],
+			}]}})
 			const client = new QueryClient()
 			const boards = [
 				kanbanQuery(100, 10, {include_subprojects: true}),
