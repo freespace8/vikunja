@@ -117,22 +117,28 @@ func (bs *bucketSet) parentBucketFor(child *bucketSet, childBucket *Bucket) int6
 }
 
 // childBucketFor is the reverse of parentBucketFor: the bucket of a sub-project's
-// home view a card dropped into the given parent bucket moves to.
+// home view a card dropped into the given parent bucket moves to. Candidates come by role, then by title,
+// and only one that maps back to the same parent bucket counts, so the card stays where it was dropped.
 func (bs *bucketSet) childBucketFor(child *bucketSet, parentBucket *Bucket) (int64, bool) {
-	switch {
-	case bs.view.DoneBucketID != 0 && parentBucket.ID == bs.view.DoneBucketID && child.view.DoneBucketID != 0:
-		return child.view.DoneBucketID, true
-	case parentBucket.ID == bs.defaultID && child.defaultID != 0:
-		return child.defaultID, true
+	candidates := []int64{}
+	if bs.view.DoneBucketID != 0 && parentBucket.ID == bs.view.DoneBucketID && child.view.DoneBucketID != 0 {
+		candidates = append(candidates, child.view.DoneBucketID)
 	}
-	// Only a bucket that maps back to the same parent bucket, so the card stays where it was dropped.
-	title := normalizeBucketTitle(parentBucket.Title)
-	if title == "" {
-		return 0, false
+	if parentBucket.ID == bs.defaultID && child.defaultID != 0 {
+		candidates = append(candidates, child.defaultID)
 	}
-	for _, b := range child.buckets {
-		if normalizeBucketTitle(b.Title) == title && bs.parentBucketFor(child, b) == parentBucket.ID {
-			return b.ID, true
+	if title := normalizeBucketTitle(parentBucket.Title); title != "" {
+		for _, b := range child.buckets {
+			if normalizeBucketTitle(b.Title) == title {
+				candidates = append(candidates, b.ID)
+			}
+		}
+	}
+	for _, id := range candidates {
+		for _, b := range child.buckets {
+			if b.ID == id && bs.parentBucketFor(child, b) == parentBucket.ID {
+				return id, true
+			}
 		}
 	}
 	return 0, false
