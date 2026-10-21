@@ -407,6 +407,36 @@ func TestKanbanSubprojects_Read(t *testing.T) {
 		assert.Equal(t, own.ID, tasks[0].ID)
 	})
 
+	t.Run("the flat bucket_id filter finds sub-project tasks when the view has a filter of its own", func(t *testing.T) {
+		f := setup(t)
+		childTask := taskOf(f, f.tree.child)
+		placeTask(t, f.s, childTask, f.child["Doing"])
+		_, err := f.s.ID(f.parentView.ID).Cols("filter").Update(&ProjectView{
+			Filter: &TaskCollection{
+				Filter: "done = false",
+			},
+		})
+		require.NoError(t, err)
+		doing := readBoard(t, f.s, board(f, true), owner, 1, 25)["Doing"]
+		require.Equal(t, []int64{childTask}, bucketTaskIDs(doing))
+
+		for _, filter := range []string{
+			"bucket_id = " + idStr(doing.ID),
+			"(priority >= 0) && bucket_id = " + idStr(doing.ID),
+		} {
+			tc := board(f, true)
+			tc.SetForceFlatTasks()
+			tc.Filter = filter
+			result, _, total, err := tc.ReadAll(f.s, owner, "", 1, 1)
+			require.NoError(t, err, filter)
+			tasks, ok := result.([]*Task)
+			require.True(t, ok)
+			require.Len(t, tasks, 1, filter)
+			assert.Equal(t, childTask, tasks[0].ID, filter)
+			assert.Equal(t, doing.Count, total, filter)
+		}
+	})
+
 	t.Run("an or-combined bucket filter keeps its plain meaning", func(t *testing.T) {
 		f := setup(t)
 		placeTask(t, f.s, taskOf(f, f.tree.child), f.child["Doing"])
