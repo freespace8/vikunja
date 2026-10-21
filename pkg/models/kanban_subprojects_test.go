@@ -76,7 +76,10 @@ func setTaskPosition(t *testing.T, s *xorm.Session, taskID, viewID int64, positi
 func newTask(t *testing.T, s *xorm.Session, owner *user.User, projectID int64, title string) *Task {
 	t.Helper()
 
-	task := &Task{Title: title, ProjectID: projectID}
+	task := &Task{
+		Title:     title,
+		ProjectID: projectID,
+	}
 	require.NoError(t, task.Create(s, owner))
 	return task
 }
@@ -195,7 +198,11 @@ func TestKanbanSubprojects_Read(t *testing.T) {
 
 	t.Run("a bucket without a counterpart falls back to the default bucket", func(t *testing.T) {
 		f := setup(t)
-		review := &Bucket{ProjectViewID: f.childView.ID, Title: "Review", Position: 250}
+		review := &Bucket{
+			ProjectViewID: f.childView.ID,
+			Title:         "Review",
+			Position:      250,
+		}
 		require.NoError(t, review.Create(f.s, owner))
 		placeTask(t, f.s, taskOf(f, f.tree.child), review)
 
@@ -684,6 +691,23 @@ func TestKanbanSubprojects_Move(t *testing.T) {
 		assert.False(t, hasRow(t, f, childTask, f.parentView.ID))
 	})
 
+	t.Run("a bucket that would show elsewhere on the parent's board is refused", func(t *testing.T) {
+		f := setupKanbanFixture(t, owner)
+		childTask := f.tree.tasks[f.tree.child.ID].ID
+		// The child's default bucket is called Doing, so its cards show in the parent's default bucket, not in Doing.
+		f.childView.DefaultBucketID = f.child["Doing"].ID
+		_, err := f.s.ID(f.childView.ID).Cols("default_bucket_id").Update(f.childView)
+		require.NoError(t, err)
+		placeTask(t, f.s, childTask, f.child["To-Do"])
+
+		_, can, err := drop(f, owner, childTask, f.parent["Doing"], true)
+
+		require.Error(t, err)
+		assert.False(t, can)
+		assert.True(t, IsErrSubprojectBucketNotFound(err))
+		assert.Equal(t, f.child["To-Do"].ID, bucketOf(t, f, childTask, f.childView.ID))
+	})
+
 	t.Run("a sub-project without a manual kanban view is refused", func(t *testing.T) {
 		f := setupKanbanFixture(t, owner)
 		childTask := f.tree.tasks[f.tree.child.ID].ID
@@ -717,6 +741,22 @@ func TestKanbanSubprojects_Move(t *testing.T) {
 		assert.False(t, can)
 	})
 
+	t.Run("a reader gets the same denial for a missing task as for an existing one", func(t *testing.T) {
+		f := setupKanbanFixture(t, owner)
+		reader := &user.User{ID: 2, Username: "user2"}
+		_, err := f.s.Insert(&ProjectUser{
+			ProjectID:  f.tree.parent.ID,
+			UserID:     reader.ID,
+			Permission: PermissionRead,
+		})
+		require.NoError(t, err)
+
+		_, can, err := drop(f, reader, 999999, f.parent["Doing"], true)
+
+		require.NoError(t, err)
+		assert.False(t, can)
+	})
+
 	t.Run("the sub-project's bucket limit applies", func(t *testing.T) {
 		f := setupKanbanFixture(t, owner)
 		childTask := f.tree.tasks[f.tree.child.ID].ID
@@ -740,9 +780,11 @@ func TestKanbanSubprojects_Move(t *testing.T) {
 		own := newTask(t, f.s, owner, f.tree.parent.ID, "own doing")
 		placeTask(t, f.s, own.ID, f.parent["Doing"])
 
-		_, _, err = drop(f, owner, childTask, f.parent["Doing"], true)
+		_, can, err := drop(f, owner, childTask, f.parent["Doing"], true)
 
 		require.NoError(t, err, "the parent limit only counts the parent's own task rows, which D2 keeps")
+		require.True(t, can)
+		assert.Equal(t, f.child["Doing"].ID, bucketOf(t, f, childTask, f.childView.ID))
 	})
 
 	t.Run("without the flag the move is still forbidden", func(t *testing.T) {
@@ -766,7 +808,12 @@ func TestKanbanSubprojects_Move(t *testing.T) {
 		_, can, _ = drop(f, &user.User{ID: 2, Username: "user2"}, childTask, f.parent["Doing"], true)
 		assert.False(t, can, "user without access")
 
-		_, can, _ = drop(f, &LinkSharing{ID: 1, ProjectID: f.tree.parent.ID, Permission: PermissionWrite}, childTask, f.parent["Doing"], true)
+		share := &LinkSharing{
+			ID:         1,
+			ProjectID:  f.tree.parent.ID,
+			Permission: PermissionWrite,
+		}
+		_, can, _ = drop(f, share, childTask, f.parent["Doing"], true)
 		assert.False(t, can, "link share")
 	})
 
