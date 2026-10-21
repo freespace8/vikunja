@@ -4,12 +4,25 @@ import {ProjectFactory} from '../../factories/project'
 import {ProjectViewFactory} from '../../factories/project_view'
 import {TaskBucketFactory} from '../../factories/task_buckets'
 import {TaskFactory} from '../../factories/task'
+import {TaskPositionFactory} from '../../factories/task_position'
 
-const PARENT = {project: 100, view: 104, buckets: [1001, 1002, 1003]}
-const CHILD = {project: 101, view: 108, buckets: [2001, 2002, 2003]}
+const PARENT = {
+	project: 100,
+	view: 104,
+	// The last one has no counterpart on the child's board.
+	buckets: [1001, 1002, 1003, 1004],
+}
+const CHILD = {
+	project: 101,
+	view: 108,
+	buckets: [2001, 2002, 2003],
+}
 
 async function createBoardTree() {
-	await ProjectFactory.create(1, {id: PARENT.project, title: 'Parent Project'})
+	await ProjectFactory.create(1, {
+		id: PARENT.project,
+		title: 'Parent Project',
+	})
 	await ProjectFactory.create(1, {
 		id: CHILD.project,
 		title: 'Child Project',
@@ -38,8 +51,23 @@ async function createBoardTree() {
 		}
 	}
 
-	const [parentTask] = await TaskFactory.create(1, {id: 1, project_id: PARENT.project, title: 'Parent task'})
-	const [childTask] = await TaskFactory.create(1, {id: 2, project_id: CHILD.project, title: 'Child task'}, false)
+	await BucketFactory.create(1, {
+		id: PARENT.buckets[3],
+		title: 'Review',
+		project_view_id: PARENT.view,
+		position: 400,
+	}, false)
+
+	const [parentTask] = await TaskFactory.create(1, {
+		id: 1,
+		project_id: PARENT.project,
+		title: 'Parent task',
+	})
+	const [childTask] = await TaskFactory.create(1, {
+		id: 2,
+		project_id: CHILD.project,
+		title: 'Child task',
+	}, false)
 	await TaskBucketFactory.create(1, {
 		task_id: parentTask.id,
 		bucket_id: PARENT.buckets[1],
@@ -51,20 +79,56 @@ async function createBoardTree() {
 		project_view_id: CHILD.view,
 	}, false)
 
-	const [todoChildTask] = await TaskFactory.create(1, {id: 3, project_id: CHILD.project, title: 'Child to-do'}, false)
+	const [secondParentTask] = await TaskFactory.create(1, {
+		id: 4,
+		project_id: PARENT.project,
+		title: 'Parent second',
+	}, false)
+	await TaskBucketFactory.create(1, {
+		task_id: secondParentTask.id,
+		bucket_id: PARENT.buckets[1],
+		project_view_id: PARENT.view,
+	}, false)
+	// The child task has no position in the parent's view, so it sorts after the own cards although its id is lower.
+	await TaskPositionFactory.create(1, {
+		task_id: parentTask.id,
+		project_view_id: PARENT.view,
+		position: 100,
+	})
+	await TaskPositionFactory.create(1, {
+		task_id: secondParentTask.id,
+		project_view_id: PARENT.view,
+		position: 250,
+	}, false)
+
+	const [todoChildTask] = await TaskFactory.create(1, {
+		id: 3,
+		project_id: CHILD.project,
+		title: 'Child to-do',
+	}, false)
 	await TaskBucketFactory.create(1, {
 		task_id: todoChildTask.id,
 		bucket_id: CHILD.buckets[0],
 		project_view_id: CHILD.view,
 	}, false)
 
-	return {parentTask, childTask}
+	return {
+		parentTask,
+		childTask,
+	}
 }
 
+const moveUrl = (bucket: number) =>
+	`/api/v2/projects/${PARENT.project}/views/${PARENT.view}/buckets/${PARENT.buckets[bucket]}/tasks`
 const column = (page, position: number) => page.locator(`.kanban .bucket:nth-child(${position}) .tasks`)
 const card = (page, title: string) => page.locator('.kanban .bucket .tasks .task').filter({hasText: title}).first()
 
 test.describe('Kanban board of a parent project with sub-projects', () => {
+	// Wide enough for all five columns, so that no drag has to scroll the board.
+	test.beforeEach(async ({page}) => {
+		await page.setViewportSize({width: 1900, height: 900})
+	})
+
 	test('Shows a sub-project task in the column with the same name and moves it on its own board', async ({
 		authenticatedPage: page,
 		apiContext,
@@ -81,7 +145,7 @@ test.describe('Kanban board of a parent project with sub-projects', () => {
 		await expect(card(page, 'Parent task').locator('.kanban-card__project')).toHaveText('Parent Project')
 
 		const move = page.waitForResponse(response =>
-			new URL(response.url()).pathname === `/api/v2/projects/${PARENT.project}/views/${PARENT.view}/buckets/${PARENT.buckets[2]}/tasks`
+			new URL(response.url()).pathname === moveUrl(2)
 			&& response.request().method() === 'PUT',
 		)
 		await card(page, 'Child task').dragTo(column(page, 3))
@@ -117,7 +181,7 @@ test.describe('Kanban board of a parent project with sub-projects', () => {
 		await expect(column(page, 1)).toContainText('Child to-do')
 
 		const move = page.waitForResponse(response =>
-			new URL(response.url()).pathname === `/api/v2/projects/${PARENT.project}/views/${PARENT.view}/buckets/${PARENT.buckets[0]}/tasks`
+			new URL(response.url()).pathname === moveUrl(0)
 			&& response.request().method() === 'PUT',
 		)
 		const patches: string[] = []
@@ -135,5 +199,62 @@ test.describe('Kanban board of a parent project with sub-projects', () => {
 		const stored = await apiContext.get(`tasks/${parentTask.id}`, {headers})
 		expect(stored.ok()).toBe(true)
 		expect((await stored.json()).project_id).toBe(PARENT.project)
+	})
+
+	test('Shows the own cards by position before the sub-project cards', async ({authenticatedPage: page}) => {
+		await createBoardTree()
+
+		await page.goto(`/projects/${PARENT.project}/${PARENT.view}`)
+
+		await expect(column(page, 2).locator('.task')).toHaveCount(3)
+		await expect(column(page, 2).locator('.task').nth(0)).toContainText('Parent task')
+		await expect(column(page, 2).locator('.task').nth(1)).toContainText('Parent second')
+		await expect(column(page, 2).locator('.task').nth(2)).toContainText('Child task')
+	})
+
+	test('Reorders an own card inside its column and keeps the order after a reload', async ({
+		authenticatedPage: page,
+	}) => {
+		await createBoardTree()
+		await page.goto(`/projects/${PARENT.project}/${PARENT.view}`)
+		await expect(column(page, 2).locator('.task')).toHaveCount(3)
+
+		const position = page.waitForResponse(response =>
+			new URL(response.url()).pathname.endsWith('/tasks/1/position') && response.request().method() !== 'GET',
+		)
+		await card(page, 'Parent task').dragTo(card(page, 'Parent second'))
+		expect((await position).ok()).toBeTruthy()
+
+		const tasks = column(page, 2).locator('.task')
+		await expect(tasks.nth(0)).toContainText('Parent second')
+		await expect(tasks.nth(1)).toContainText('Parent task')
+		await expect(tasks.nth(2)).toContainText('Child task')
+
+		await page.reload()
+		await expect(tasks.nth(0)).toContainText('Parent second')
+		await expect(tasks.nth(1)).toContainText('Parent task')
+		await expect(tasks.nth(2)).toContainText('Child task')
+	})
+
+	test('Refuses a drop into a column that the sub-project has no counterpart for', async ({
+		authenticatedPage: page,
+	}) => {
+		await createBoardTree()
+		await page.goto(`/projects/${PARENT.project}/${PARENT.view}`)
+		await expect(column(page, 2)).toContainText('Child task')
+
+		const move = page.waitForResponse(response =>
+			new URL(response.url()).pathname === moveUrl(3) && response.request().method() === 'PUT',
+		)
+		await card(page, 'Child task').dragTo(column(page, 4))
+		expect((await move).status()).toBe(400)
+
+		await expect(page.getByText('has no bucket that matches this one')).toBeVisible()
+		await expect(column(page, 2)).toContainText('Child task')
+		await expect(column(page, 4)).not.toContainText('Child task')
+
+		await page.reload()
+		await expect(column(page, 2)).toContainText('Child task')
+		await expect(column(page, 4)).not.toContainText('Child task')
 	})
 })
