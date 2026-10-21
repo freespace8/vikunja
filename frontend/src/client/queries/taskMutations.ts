@@ -28,6 +28,7 @@ import {assertClientRequestContext, captureClientRequestContext, isRequestContex
 import {contextMutationOptions} from './contextMutation'
 import {normalizeTask, taskKeys, type PaginatedTaskResponse, type TaskResponse} from './tasks'
 import {bucketKeys, bucketsQuery, kanbanKeys, normalizeBucket, type BoardData} from './kanban'
+import {syncAggregateBoardsAfterMove} from './aggregateBoards'
 import {
 	cachedTaskCopies,
 	changesTaskProject,
@@ -463,6 +464,11 @@ export function moveTaskMutationOptions() {
 			)
 			const id = data.task?.id ?? task.id
 			if (id !== undefined) reconcileTaskBuckets(client, {project, view, bucket: target, task: id})
+			syncAggregateBoardsAfterMove(client, {
+				boardProject: project,
+				taskProject: data.task?.project_id ?? task.project_id,
+				taskId: id,
+			})
 		},
 		onSettled: ({task}, client) => invalidateTaskMembership(client, task.id),
 	})
