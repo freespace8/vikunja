@@ -125,7 +125,17 @@ func (bs *bucketSet) childBucketFor(child *bucketSet, parentBucket *Bucket) (int
 	case parentBucket.ID == bs.defaultID && child.defaultID != 0:
 		return child.defaultID, true
 	}
-	return child.idByTitle(parentBucket.Title)
+	// Only a bucket that maps back to the same parent bucket, so the card stays where it was dropped.
+	title := normalizeBucketTitle(parentBucket.Title)
+	if title == "" {
+		return 0, false
+	}
+	for _, b := range child.buckets {
+		if normalizeBucketTitle(b.Title) == title && bs.parentBucketFor(child, b) == parentBucket.ID {
+			return b.ID, true
+		}
+	}
+	return 0, false
 }
 
 // homeKanbanViews returns the home view of each project: its first manual kanban
@@ -436,6 +446,10 @@ func (b *TaskBucket) redirectToSubproject(s *xorm.Session, a web.Auth) error {
 	}
 
 	task, err := GetTaskByIDSimple(s, b.TaskID)
+	if IsErrTaskDoesNotExist(err) {
+		// Left to the regular checks, so a reader gets the same denial for any task id.
+		return nil
+	}
 	if err != nil {
 		return err
 	}

@@ -327,7 +327,11 @@ func TestHumaTaskCollection_IncludeSubprojects(t *testing.T) {
 	})
 
 	t.Run("the buckets endpoint places sub-project tasks in the parent's buckets", func(t *testing.T) {
-		k := kanbanProjects{t: t, e: e, tok: tok}
+		k := kanbanProjects{
+			t:   t,
+			e:   e,
+			tok: tok,
+		}
 		parentView := viewIDOfKind(parentID, "kanban")
 		childView := viewIDOfKind(childID, "kanban")
 		grandchildView := viewIDOfKind(grandchildID, "kanban")

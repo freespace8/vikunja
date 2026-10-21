@@ -137,7 +137,11 @@ func TestHumaKanbanSubprojects(t *testing.T) {
 	e, err := setupTestEnv()
 	require.NoError(t, err)
 	tok := humaTokenFor(t, &testuser1)
-	k := kanbanProjects{t: t, e: e, tok: tok}
+	k := kanbanProjects{
+		t:   t,
+		e:   e,
+		tok: tok,
+	}
 
 	parentID := k.create("kbparent", 0)
 	childID := k.create("kbchild", parentID)
