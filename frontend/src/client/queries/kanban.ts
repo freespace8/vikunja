@@ -71,7 +71,7 @@ export function bucketsQuery(project: number, view: number) {
 	})
 }
 
-export function kanbanQuery(project: number, view: number, params: TaskFilterParams = {}) {
+export function kanbanQuery(project: number, view: number, params: TaskFilterParams = {}, enabled = true) {
 	return queryOptions({
 		queryKey: kanbanKeys.board(project, view, params),
 		queryFn: async ({signal}): Promise<BoardData> => {
@@ -86,6 +86,6 @@ export function kanbanQuery(project: number, view: number, params: TaskFilterPar
 				pages: Object.fromEntries(buckets.map(bucket => [bucket.id, 1])),
 			}
 		},
-		enabled: project !== 0 && view !== 0,
+		enabled: project !== 0 && view !== 0 && enabled,
 	})
 }

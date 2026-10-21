@@ -1,5 +1,5 @@
 import {shallowMount, flushPromises} from '@vue/test-utils'
-import {describe, expect, it, vi, beforeEach} from 'vitest'
+import {afterEach, describe, expect, it, vi, beforeEach} from 'vitest'
 import {createPinia} from 'pinia'
 import {nextTick} from 'vue'
 import draggable from 'zhyswan-vuedraggable'
@@ -10,6 +10,8 @@ const sdk = vi.hoisted(() => ({
 	projectViewTasksList: vi.fn(),
 	bucketsUpdate: vi.fn(),
 	tasksCreate: vi.fn(),
+	taskBucketUpdate: vi.fn(),
+	tasksPositionUpdate: vi.fn(),
 }))
 const {projectViewBucketsTasksList: loadBoard, projectViewTasksList: loadBucketPage, bucketsUpdate: updateBucket} = sdk
 
@@ -22,6 +24,13 @@ const buckets = [
 
 vi.mock('@/client/generated', () => sdk)
 vi.mock('@/message', () => ({error: vi.fn(), success: vi.fn()}))
+
+const aggregate = vi.hoisted(() => ({state: {value: false as boolean | undefined}}))
+vi.mock('@/composables/useIncludeSubprojects', async () => {
+	const {computed, reactive} = await import('vue')
+	aggregate.state = reactive(aggregate.state)
+	return {useIncludeSubprojects: () => computed(() => aggregate.state.value)}
+})
 vi.mock('@/composables/useCurrentProject', () => ({
 	useCurrentProject: () => ({
 		currentProject: {
@@ -88,6 +97,8 @@ vi.mock('vue-i18n', async importOriginal => ({
 import ProjectKanban from './ProjectKanban.vue'
 
 let queryClient: QueryClient
+const mounted: { unmount: () => void }[] = []
+afterEach(() => mounted.splice(0).forEach(wrapper => wrapper.unmount()))
 
 async function mountKanban(stubs: Record<string, unknown> = {}, projectId = 1) {
 	queryClient = new QueryClient()
@@ -108,6 +119,7 @@ async function mountKanban(stubs: Record<string, unknown> = {}, projectId = 1) {
 		},
 	})
 
+	mounted.push(wrapper)
 	await flushPromises()
 	return wrapper
 }
@@ -154,6 +166,9 @@ describe('ProjectKanban', () => {
 		loadBucketPage.mockClear()
 		loadBucketPage.mockResolvedValue({data: {items: []}})
 		sdk.tasksCreate.mockReset()
+		sdk.taskBucketUpdate.mockReset()
+		sdk.tasksPositionUpdate.mockReset()
+		aggregate.state.value = false
 		drop.result = {moved: false, targetProjectId: null}
 	})
 
@@ -293,5 +308,190 @@ describe('ProjectKanban', () => {
 		wrapper.findComponent(draggable).vm.$emit('end', dragEndEvent('42'))
 
 		expect(updateBucket).not.toHaveBeenCalled()
+	})
+
+	describe('on a parent project that includes its sub-projects', () => {
+		const STUBS = {BucketDraggable: DRAGGABLE_STUB, TaskDraggable: DRAGGABLE_STUB}
+		const own = {id: 11, title: 'Own', project_id: 1, position: 100}
+		const child = {id: 21, title: 'Child', project_id: 2, position: 0}
+		const board = (first: unknown[] = [own, child]) => ({
+			data: {items: [{...buckets[0], tasks: first, count: first.length}, buckets[1], buckets[2]]},
+		})
+
+		const fullFirstBucket = () => ({
+			data: {items: [{...buckets[0], tasks: [own], count: 2, limit: 2}, buckets[1], buckets[2]]},
+		})
+
+		type Vm = {updateTasks: (bucketId: number, tasks: unknown[]) => void}
+
+		// Mimics sortable: the card leaves the first column and shows up in the target column.
+		async function dragTask(
+			wrapper: Awaited<ReturnType<typeof mountKanban>>,
+			taskId: number,
+			targetIndex: number,
+		) {
+			const vm = wrapper.vm as unknown as Vm
+			taskDraggable(wrapper).vm.$emit('start', taskDragEndEvent(taskId, 0))
+			await nextTick()
+			const card = [own, child].find(item => item.id === taskId)
+			if (targetIndex !== 0) {
+				vm.updateTasks(1, [own, child].filter(item => item.id !== taskId))
+				vm.updateTasks(buckets[targetIndex].id, [card])
+			}
+			taskDraggable(wrapper).vm.$emit('end', taskDragEndEvent(taskId, targetIndex))
+			await flushPromises()
+		}
+
+		beforeEach(() => {
+			aggregate.state.value = true
+			loadBoard.mockResolvedValue(board())
+			sdk.taskBucketUpdate.mockImplementation(async ({path}: {path: {bucket: number}}) => ({
+				data: {bucket_id: path.bucket, task: child},
+			}))
+			sdk.tasksPositionUpdate.mockResolvedValue({data: {position: 10}})
+		})
+
+		it('asks for the sub-project tasks when the project has live sub-projects', async () => {
+			await mountKanban(STUBS)
+			expect(loadBoard).toHaveBeenCalledOnce()
+			expect(loadBoard).toHaveBeenCalledWith(expect.objectContaining({
+				query: expect.objectContaining({include_subprojects: true}),
+			}))
+		})
+
+		it('does not send the flag for a project without live sub-projects', async () => {
+			aggregate.state.value = false
+			await mountKanban(STUBS)
+			expect(loadBoard).toHaveBeenCalledOnce()
+			expect(loadBoard.mock.calls[0][0].query).not.toHaveProperty('include_subprojects')
+		})
+
+		it('loads no board until it is known whether the project has sub-projects', async () => {
+			aggregate.state.value = undefined
+			await mountKanban(STUBS)
+			expect(loadBoard).not.toHaveBeenCalled()
+
+			aggregate.state.value = true
+			await flushPromises()
+			expect(loadBoard).toHaveBeenCalledOnce()
+			expect(loadBoard).toHaveBeenCalledWith(expect.objectContaining({
+				query: expect.objectContaining({include_subprojects: true}),
+			}))
+		})
+
+		it('asks for more cards of a column with the flag as well', async () => {
+			loadBoard.mockResolvedValue({data: {items: [{...buckets[0], tasks: [own], count: 30}, buckets[1], buckets[2]]}})
+			const wrapper = await mountKanban(STUBS)
+			const el = document.createElement('div')
+
+			;(wrapper.vm as unknown as {handleTaskContainerScroll: (id: number, el: HTMLElement) => void})
+				.handleTaskContainerScroll(1, el)
+			await flushPromises()
+
+			expect(loadBucketPage).toHaveBeenCalledWith(expect.objectContaining({
+				query: expect.objectContaining({include_subprojects: true, page: 2}),
+			}))
+		})
+
+		it('shows the own cards by position before the sub-project cards', async () => {
+			const late = {id: 12, title: 'Late', project_id: 1, position: 300}
+			loadBoard.mockResolvedValue(board([child, late, own]))
+			const wrapper = await mountKanban(STUBS)
+
+			expect(wrapper.findAll('.bucket')[0].findAll('.task-item').map(item => Number(item.attributes('data-task-id'))))
+				.toEqual([11, 12, 21])
+		})
+
+		it('moves a dropped sub-project card to the other column without sending a position', async () => {
+			const wrapper = await mountKanban(STUBS)
+
+			await dragTask(wrapper, 21, 1)
+
+			expect(sdk.taskBucketUpdate).toHaveBeenCalledWith(expect.objectContaining({
+				path: {project: 1, view: 10, bucket: 2},
+				body: {task_id: 21},
+			}))
+			expect(sdk.tasksPositionUpdate).not.toHaveBeenCalled()
+		})
+
+		it('does not reorder an own card either when it changes the column', async () => {
+			sdk.taskBucketUpdate.mockResolvedValue({data: {bucket_id: 2, task: own}})
+			const wrapper = await mountKanban(STUBS)
+
+			await dragTask(wrapper, 11, 1)
+
+			expect(sdk.taskBucketUpdate).toHaveBeenCalledOnce()
+			expect(sdk.tasksPositionUpdate).not.toHaveBeenCalled()
+		})
+
+		it('sends nothing for a card dropped in its own column and puts it back', async () => {
+			const wrapper = await mountKanban(STUBS)
+
+			await dragTask(wrapper, 21, 0)
+
+			expect(sdk.taskBucketUpdate).not.toHaveBeenCalled()
+			expect(sdk.tasksPositionUpdate).not.toHaveBeenCalled()
+			expect(wrapper.find('.kanban').classes()).not.toContain('is-dragging')
+			expect(cachedBoard()?.buckets[0].tasks.map(item => item.id)).toEqual([11, 21])
+		})
+
+		it('puts a card back when the server refuses the move', async () => {
+			sdk.taskBucketUpdate.mockRejectedValue({code: 10900})
+			const wrapper = await mountKanban(STUBS)
+
+			await dragTask(wrapper, 21, 1)
+
+			expect(sdk.taskBucketUpdate).toHaveBeenCalledOnce()
+			expect(cachedBoard()?.buckets[0].tasks.map(item => item.id)).toEqual([11, 21])
+			expect(cachedBoard()?.buckets[1].tasks).toEqual([])
+		})
+
+		it('leaves the limit of a column to the server', async () => {
+			loadBoard.mockResolvedValue(fullFirstBucket())
+			const wrapper = await mountKanban(STUBS)
+
+			const header = wrapper.find('.bucket-header .limit')
+			expect(header.text()).toBe('2')
+			expect(header.classes()).not.toContain('is-max')
+			expect(wrapper.find('.bucket-footer xbutton').attributes('disabled')).toBe('false')
+			const vm = wrapper.vm as unknown as {shouldAcceptDrop: (bucket: unknown) => boolean}
+			expect(vm.shouldAcceptDrop({...buckets[1], limit: 2, count: 2})).toBe(true)
+		})
+
+		it('still enforces the limit of a column on a project without sub-projects', async () => {
+			aggregate.state.value = false
+			loadBoard.mockResolvedValue(fullFirstBucket())
+			const wrapper = await mountKanban(STUBS)
+
+			const header = wrapper.find('.bucket-header .limit')
+			expect(header.text()).toBe('2/2')
+			expect(header.classes()).toContain('is-max')
+			expect(wrapper.find('.bucket-footer xbutton').attributes('disabled')).toBe('true')
+			const vm = wrapper.vm as unknown as {shouldAcceptDrop: (bucket: unknown) => boolean}
+			expect(vm.shouldAcceptDrop({...buckets[1], limit: 2, count: 2})).toBe(false)
+		})
+
+		it('reads the board again after a bucket was renamed', async () => {
+			updateBucket.mockResolvedValue({data: {id: 1, title: 'Renamed', position: 100}})
+			const wrapper = await mountKanban(STUBS)
+			loadBoard.mockClear()
+
+			await (wrapper.vm as unknown as {saveBucketTitle: (id: number, title: string) => Promise<void>})
+				.saveBucketTitle(1, 'Renamed')
+			await flushPromises()
+
+			expect(loadBoard).toHaveBeenCalledOnce()
+		})
+
+		it('reads the board again after a card was dropped on a sidebar project', async () => {
+			const wrapper = await mountKanban(STUBS)
+			drop.result = {moved: true, targetProjectId: 2}
+			loadBoard.mockClear()
+
+			taskDraggable(wrapper).vm.$emit('end', taskDragEndEvent(11))
+			await flushPromises()
+
+			expect(loadBoard).toHaveBeenCalledOnce()
+		})
 	})
 })

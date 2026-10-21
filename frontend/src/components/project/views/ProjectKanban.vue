@@ -66,10 +66,10 @@
 									</h2>
 									<span
 										v-if="bucket.limit > 0 || alwaysShowBucketTaskCount"
-										:class="{'is-max': bucket.limit > 0 && bucket.count >= bucket.limit}"
+										:class="{'is-max': isBucketFull(bucket)}"
 										class="limit"
 									>
-										{{ bucket.limit > 0 ? `${bucket.count}/${bucket.limit}` : bucket.count }}
+										{{ bucket.limit > 0 && !includeSubprojects ? `${bucket.count}/${bucket.limit}` : bucket.count }}
 									</span>
 									<Dropdown
 										v-if="canWrite && !collapsedBuckets[bucket.id]"
@@ -199,12 +199,12 @@
 											</div>
 											<XButton
 												v-else
-												v-tooltip="bucket.limit > 0 && bucket.count >= bucket.limit ? $t('project.kanban.bucketLimitReached') : ''"
+												v-tooltip="isBucketFull(bucket) ? $t('project.kanban.bucketLimitReached') : ''"
 												class="is-fullwidth has-text-centered"
 												:shadow="false"
 												icon="plus"
 												variant="secondary"
-												:disabled="bucket.limit > 0 && bucket.count >= bucket.limit"
+												:disabled="isBucketFull(bucket)"
 												@click="toggleShowNewTaskInput(bucket.id)"
 											>
 												{{
@@ -332,6 +332,7 @@ import {getSavedFilterIdFromProjectId, isSavedFilterProject} from '@/client/quer
 import {savedFilterQuery} from '@/client/queries/savedFilters'
 import {useCurrentProject} from '@/composables/useCurrentProject'
 import {useTaskDragToProject} from '@/composables/useTaskDragToProject'
+import {useIncludeSubprojects} from '@/composables/useIncludeSubprojects'
 import type {TaskFilterParams, TaskResponse} from '@/client/queries/tasks'
 import type {ProjectView} from '@/client/generated'
 import {createProjectViewUpdate, useUpdateProjectViewMutation} from '@/client/queries/projectViews'
@@ -484,8 +485,15 @@ function onHandleTouchMove(e: TouchEvent) {
 	}
 }
 
-const boardParams = computed(() => ({...params.value, filter_timezone: authStore.settings.timezone}))
-const board = useKanban(projectId, () => props.viewId, boardParams)
+// A parent project's board also shows the cards of its sub-projects. undefined: not known yet, so no request goes out
+// that would have to be repeated with the flag.
+const includeSubprojects = useIncludeSubprojects(() => projectId.value)
+const boardParams = computed(() => ({
+	...params.value,
+	filter_timezone: authStore.settings.timezone,
+	...(includeSubprojects.value ? {include_subprojects: true} : {}),
+}))
+const board = useKanban(projectId, () => props.viewId, boardParams, () => includeSubprojects.value !== undefined)
 const queryClient = useQueryClient()
 const buckets = board.buckets
 const createBucketMutation = useCreateBucketMutation()
@@ -569,6 +577,9 @@ async function updateTaskPosition(e: SortableEvent & {originalEvent?: MouseEvent
 			// A moved task stays in a pseudo-project board (favorites, saved filters) until the board is re-read.
 			if (project < 0) {
 				removeTaskFromBoard(queryClient, kanbanKeys.board(project, view, boardParams.value), task.id)
+			} else if (includeSubprojects.value) {
+				// The task may have moved into another sub-project, which the board still shows.
+				void board.refetch()
 			}
 		})
 		if (moved) return
@@ -576,6 +587,11 @@ async function updateTaskPosition(e: SortableEvent & {originalEvent?: MouseEvent
 		const index = bucket?.tasks.findIndex(task => task.id === Number(e.item.dataset.taskId)) ?? -1
 		if (!bucket || index < 0) return
 		const task = bucket.tasks[index]
+		if (includeSubprojects.value) {
+			// Sub-project cards have no position in this view, so no card is reordered here, only moved between columns.
+			if (bucket.id !== sourceBucket.value) await moveMutation.mutateAsync({project, view, bucket: bucket.id, task})
+			return
+		}
 		const before = bucket.tasks[index - 1]
 		const after = bucket.tasks[index + 1]
 		if (bucket.id !== sourceBucket.value) {
@@ -628,7 +644,7 @@ async function addTaskToBucket(bucketId: number) {
 	scrollTaskContainerToTop(bucketId)
 
 	const bucket = getBucketById(bucketId)
-	if (bucket && bucket.limit && bucket.count >= bucket.limit) {
+	if (!includeSubprojects.value && bucket && bucket.limit && bucket.count >= bucket.limit) {
 		toggleShowNewTaskInput(bucketId)
 	}
 }
@@ -695,6 +711,7 @@ async function saveBucketTitle(bucketId: number, bucketTitle: string) {
 		id: bucketId,
 		title: bucketTitle,
 	}, saveBucketTitleMutation)
+	await refetchAggregateBoard()
 	bucketTitleEditable.value = false
 }
 
@@ -776,8 +793,20 @@ async function setBucketLimit(bucketId: number, now: boolean = false) {
 	setBucketLimitCancel.value = setTimeout(saveBucketLimit, 2500, bucketId, limit)
 }
 
+// Sub-project cards don't count against a bucket's limit on the server, so only the server can tell whether
+// a column is full; the client lets the move through and shows its refusal.
+function isBucketFull(bucket: BucketResponse) {
+	return !includeSubprojects.value && bucket.limit > 0 && bucket.count >= bucket.limit
+}
+
+// A renamed, done or default bucket changes where the cards of the sub-projects land.
+async function refetchAggregateBoard() {
+	if (includeSubprojects.value) await board.refetch()
+}
+
 function shouldAcceptDrop(bucket: BucketResponse) {
 	return (
+		includeSubprojects.value === true ||
 		// When dragging from a bucket who has its limit reached, dragging should still be possible
 		bucket.id === sourceBucket.value ||
 		// If there is no limit set, dragging & dropping should always work
@@ -818,7 +847,7 @@ function toggleDefaultBucket(bucket: BucketResponse) {
 		projectId: projectId.value,
 		viewId: currentView.id,
 		view: createProjectViewUpdate({...currentView, default_bucket_id: defaultBucketId}),
-	})
+	}, {onSuccess: refetchAggregateBoard})
 }
 
 function toggleDoneBucket(bucket: BucketResponse) {
@@ -834,7 +863,7 @@ function toggleDoneBucket(bucket: BucketResponse) {
 		projectId: projectId.value,
 		viewId: currentView.id,
 		view: createProjectViewUpdate({...currentView, done_bucket_id: doneBucketId}),
-	})
+	}, {onSuccess: refetchAggregateBoard})
 }
 
 function collapseBucket(bucket: BucketResponse) {
