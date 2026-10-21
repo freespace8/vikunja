@@ -324,6 +324,8 @@ $task-background: var(--white);
 		font-family: $family-sans-serif;
 		font-size: .85rem;
 		word-break: break-word;
+		// The global heading rule balances lines, which wraps short titles early and leaves the card half empty.
+		text-wrap: wrap;
 	}
 
 	.kanban-card__title-link {
