@@ -457,11 +457,9 @@ func (tf *TaskCollection) ReadAll(s *xorm.Session, a web.Auth, search string, pa
 		return nil, 0, 0, err
 	}
 
-	if tf.includeSubprojects && view != nil {
-		opts.subprojectBuckets, err = newSubprojectBuckets(s, view, projects)
-		if err != nil {
-			return nil, 0, 0, err
-		}
+	opts.subprojectBuckets, err = tf.subprojectBucketsFor(s, view, projects)
+	if err != nil {
+		return nil, 0, 0, err
 	}
 
 	return getTaskOrTasksInBuckets(s, a, projects, view, opts, filteringForBucket, tf.forceFlatTasks)

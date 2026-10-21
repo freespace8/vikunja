@@ -17,6 +17,7 @@
 package models
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -52,6 +53,14 @@ func subprojectIDs(s *xorm.Session, a web.Auth, projectID int64) (ids []int64, e
 		return nil, fmt.Errorf("could not get sub-projects of project %d: %w", projectID, err)
 	}
 	return ids, nil
+}
+
+// subprojectBucketsFor builds the aggregation for a collection, if it asks for one.
+func (tf *TaskCollection) subprojectBucketsFor(s *xorm.Session, view *ProjectView, projects []*Project) (*subprojectBuckets, error) {
+	if !tf.includeSubprojects || view == nil {
+		return nil, nil
+	}
+	return newSubprojectBuckets(s, view, projects)
 }
 
 // bucketSet is a manual kanban view with its buckets in display order.
@@ -338,8 +347,8 @@ type ErrSubprojectBucketNotFound struct {
 
 // IsErrSubprojectBucketNotFound checks if an error is ErrSubprojectBucketNotFound.
 func IsErrSubprojectBucketNotFound(err error) bool {
-	_, ok := err.(ErrSubprojectBucketNotFound)
-	return ok
+	var target ErrSubprojectBucketNotFound
+	return errors.As(err, &target)
 }
 
 func (err ErrSubprojectBucketNotFound) Error() string {
@@ -384,12 +393,24 @@ func (b *TaskBucket) redirectToSubproject(s *xorm.Session, a web.Auth) error {
 		ProjectViewID: b.ProjectViewID,
 	}
 	view, err := parentBucket.getOwnView(s)
-	if err != nil || view.ProjectID < 1 || view.ViewKind != ProjectViewKindKanban || view.BucketConfigurationMode != BucketConfigurationModeManual {
+	if err != nil {
+		return err
+	}
+	if view.ProjectID < 1 || view.ViewKind != ProjectViewKindKanban || view.BucketConfigurationMode != BucketConfigurationModeManual {
 		return nil
 	}
 
+	// Before the task is looked up, so a stranger can't probe task ids.
+	canRead, _, err := view.CanRead(s, a)
+	if err != nil || !canRead {
+		return err
+	}
+
 	task, err := GetTaskByIDSimple(s, b.TaskID)
-	if err != nil || task.ProjectID == view.ProjectID {
+	if err != nil {
+		return err
+	}
+	if task.ProjectID == view.ProjectID {
 		return nil
 	}
 
@@ -406,11 +427,6 @@ func (b *TaskBucket) redirectToSubproject(s *xorm.Session, a web.Auth) error {
 	}
 	if !isDescendant {
 		return nil
-	}
-
-	canRead, _, err := view.CanRead(s, a)
-	if err != nil || !canRead {
-		return err
 	}
 
 	// getOwnView only returns the view, the bucket itself is needed for its title.
