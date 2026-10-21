@@ -310,31 +310,60 @@ func (sb *subprojectBuckets) cond(parentBucketID int64) builder.Cond {
 	))
 }
 
-// takeBucketFilter turns a top-level `bucket_id = N` filter, as the load-more
-// request of a column sends it, into the aggregate membership condition. The
-// atom is removed from the filters because it would otherwise join the parent
-// view's task_buckets, which sub-project tasks have no rows in. Any other shape
-// keeps its plain meaning.
+// takeBucketFilter turns a `bucket_id = N` filter joined by AND all the way up, as the load-more
+// request of a column sends it (possibly inside the group the view's own filter wraps it in), into the
+// aggregate membership condition. The atom is removed from the filters because it would otherwise join
+// the parent view's task_buckets, which sub-project tasks have no rows in. Any other shape keeps its
+// plain meaning.
 func (sb *subprojectBuckets) takeBucketFilter(opts *taskSearchOptions) {
-	for i, f := range opts.parsedFilters {
-		if i > 0 && f.join != filterConcatAnd {
-			return
-		}
-	}
-
-	for i, f := range opts.parsedFilters {
-		bucketID, isInt := f.value.(int64)
-		if f.field != taskPropertyBucketID || f.comparator != taskFilterComparatorEquals || !isInt {
-			continue
-		}
-
-		rest := make([]*taskFilter, 0, len(opts.parsedFilters)-1)
-		rest = append(rest, opts.parsedFilters[:i]...)
-		rest = append(rest, opts.parsedFilters[i+1:]...)
-		opts.parsedFilters = rest
-		opts.bucketCond = sb.cond(bucketID)
+	rest, bucketID, found := takeBucketAtom(opts.parsedFilters)
+	if !found {
 		return
 	}
+	opts.parsedFilters = rest
+	opts.bucketCond = sb.cond(bucketID)
+}
+
+// takeBucketAtom returns a copy of filters without the first `bucket_id = N` atom it can reach through
+// AND-joined filters and groups, dropping groups left empty.
+func takeBucketAtom(filters []*taskFilter) (rest []*taskFilter, bucketID int64, found bool) {
+	for i, f := range filters {
+		if i > 0 && f.join != filterConcatAnd {
+			return nil, 0, false
+		}
+	}
+
+	for i, f := range filters {
+		var replacement []*taskFilter
+		if group, isGroup := f.value.([]*taskFilter); isGroup {
+			if f.includeNulls {
+				continue
+			}
+			inner, id, has := takeBucketAtom(group)
+			if !has {
+				continue
+			}
+			bucketID = id
+			if len(inner) > 0 {
+				c := *f
+				c.value = inner
+				replacement = []*taskFilter{&c}
+			}
+		} else {
+			id, isInt := f.value.(int64)
+			if f.field != taskPropertyBucketID || f.comparator != taskFilterComparatorEquals || !isInt {
+				continue
+			}
+			bucketID = id
+		}
+
+		rest = make([]*taskFilter, 0, len(filters))
+		rest = append(rest, filters[:i]...)
+		rest = append(rest, replacement...)
+		rest = append(rest, filters[i+1:]...)
+		return rest, bucketID, true
+	}
+	return nil, 0, false
 }
 
 // ErrSubprojectBucketNotFound represents an error where a sub-project task is moved to a parent
