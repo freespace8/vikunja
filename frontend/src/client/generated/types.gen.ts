@@ -2912,9 +2912,9 @@ export type TimeEntry = {
      */
     readonly updated?: string;
     /**
-     * The id of the user who logged this time entry. Set by the server.
+     * The user who logged this time entry. Set by the server.
      */
-    readonly user_id?: number;
+    readonly user?: User;
 };
 
 export type TimeEntryReadBody = {
@@ -2959,9 +2959,9 @@ export type TimeEntryReadBody = {
      */
     readonly updated?: string;
     /**
-     * The id of the user who logged this time entry. Set by the server.
+     * The user who logged this time entry. Set by the server.
      */
-    readonly user_id?: number;
+    readonly user?: User;
 };
 
 export type Token = {
