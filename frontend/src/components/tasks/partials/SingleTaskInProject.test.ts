@@ -30,7 +30,7 @@ function deferred() {
 	return {promise, resolve}
 }
 
-function mountRow() {
+function mountRow(task: ITask = theTask) {
 	const router = createRouter({
 		history: createMemoryHistory(),
 		routes: [
@@ -39,7 +39,7 @@ function mountRow() {
 		],
 	})
 	return shallowMount(SingleTaskInProject, {
-		props: {theTask},
+		props: {theTask: task},
 		global: {
 			plugins: [createPinia(), router, [VueQueryPlugin, {queryClient: new QueryClient({defaultOptions: {queries: {retry: false}}})}]],
 			directives: {tooltip: {}},
@@ -88,5 +88,23 @@ describe('SingleTaskInProject', () => {
 		await flushPromises()
 
 		expect(wrapper.get('.task').classes()).not.toContain('is-loading')
+	})
+
+	it('shows the task identifier before the title', () => {
+		const wrapper = mountRow({...theTask, index: 13, identifier: 'VIK-13'})
+
+		expect(wrapper.get('.task-identifier').text()).toBe('VIK-13')
+	})
+
+	it('falls back to the task index when the project has no identifier', () => {
+		const wrapper = mountRow({...theTask, index: 7, identifier: '-7'})
+
+		expect(wrapper.get('.task-identifier').text()).toBe('#7')
+	})
+
+	it('shows no identifier for tasks that have no index yet', () => {
+		const wrapper = mountRow({...theTask, index: 0})
+
+		expect(wrapper.find('.task-identifier').exists()).toBe(false)
 	})
 })

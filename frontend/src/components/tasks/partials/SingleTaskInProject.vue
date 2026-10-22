@@ -59,6 +59,13 @@
 						class="pis-2 mie-1"
 					/>
 
+					<span
+						v-if="task.index"
+						class="task-identifier mie-1"
+					>
+						{{ getTaskIdentifier(task) }}
+					</span>
+
 					<TaskGlanceTooltip :task="task">
 						<RouterLink
 							ref="taskLinkRef"
@@ -218,7 +225,7 @@
 import {ref, watch, onMounted, computed} from 'vue'
 import {useI18n} from 'vue-i18n'
 
-import {getHexColor, getTaskBucket} from '@/helpers/task'
+import {getHexColor, getTaskBucket, getTaskIdentifier} from '@/helpers/task'
 import type {Task as ITask} from '@/client/generated'
 
 import PriorityLabel from '@/components/tasks/partials/PriorityLabel.vue'
@@ -477,6 +484,12 @@ defineExpose({
 
 	&[data-is-overdue] .dueDate {
 		color: var(--danger-text);
+	}
+
+	.task-identifier {
+		color: var(--grey-500);
+		font-size: .9rem;
+		white-space: nowrap;
 	}
 
 	.task-project {
