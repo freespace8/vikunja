@@ -34,6 +34,12 @@
 						@sorted="setActiveColumnsSortParam"
 					/>
 
+					<AddTask
+						v-if="canWrite"
+						class="table-view__add-task d-print-none"
+						:autofocus="false"
+					/>
+
 					<Pagination
 						:total-pages="totalPages"
 						:current-page="currentPage"
@@ -54,6 +60,7 @@ import TaskTable from '@/components/tasks/TaskTable.vue'
 import TaskTableColumnPicker from '@/components/tasks/TaskTableColumnPicker.vue'
 import FilterPopup from '@/components/project/partials/FilterPopup.vue'
 import Pagination from '@/components/misc/Pagination.vue'
+import AddTask from '@/components/tasks/AddTask.vue'
 
 import type {SortBy} from '@/composables/useTaskList'
 import {useTaskList} from '@/composables/useTaskList'
@@ -62,6 +69,8 @@ import {useDelayedLoading} from '@/composables/useDelayedLoading'
 import {ACTIVE_COLUMNS_DEFAULT, sortByActiveColumns, type TaskTableColumns} from '@/components/tasks/taskTableColumns'
 import {isSavedFilterProject} from '@/client/queries/projects'
 import {useIncludeSubprojects} from '@/composables/useIncludeSubprojects'
+import {useCurrentProject} from '@/composables/useCurrentProject'
+import {PERMISSIONS as Permissions} from '@/constants/permissions'
 
 const props = defineProps<{
 	isLoadingProject: boolean,
@@ -69,6 +78,12 @@ const props = defineProps<{
 	viewId: number,
 }>()
 
+const {currentProject: project} = useCurrentProject()
+
+const canWrite = computed(() => typeof project.value?.max_permission === 'number' &&
+	project.value.max_permission > Permissions.READ &&
+	project.value.id > 0 &&
+	!project.value.is_archived)
 const SORT_BY_DEFAULT: SortBy = {
 	index: 'desc',
 }
@@ -126,6 +141,9 @@ function setActiveColumnsSortParam() {
 </script>
 
 <style lang="scss" scoped>
+.table-view__add-task {
+	padding: 1rem;
+}
 .link-share-view .card {
 	border: none;
 	box-shadow: none;
