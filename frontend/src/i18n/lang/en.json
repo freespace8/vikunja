@@ -1697,7 +1697,8 @@
       "save": "Save entry",
       "startTimer": "Start timer",
       "update": "Update entry",
-      "smartFill": "Fill from last entry"
+      "smartFill": "Fill from last entry",
+      "endsSpanningEntriesAt": "Starting this timer ends your overlapping time entries at {time}."
     },
     "list": {
       "emptyTask": "No time tracked for this task yet.",

@@ -108,6 +108,13 @@
 				</XButton>
 			</template>
 		</div>
+		<p
+			v-if="backdatedStopAt !== null"
+			v-cy="'backdatedStopHint'"
+			class="help"
+		>
+			{{ $t('timeTracking.form.endsSpanningEntriesAt', {time: formatDayTime(backdatedStopAt, timeFormat)}) }}
+		</p>
 	</form>
 </template>
 
@@ -122,6 +129,9 @@ import ProjectSearch from '@/components/tasks/partials/ProjectSearch.vue'
 import {useTasks} from '@/composables/useTasks'
 import {ensureTask} from '@/client/queries/tasks'
 import {smartFillStart} from '@/helpers/time/smartFillStart'
+import {formatDayTime} from '@/helpers/time/formatTimeRange'
+import {useTimeEntries, useTimeTracking} from '@/composables/useTimeTracking'
+import {useTimeFormat} from '@/composables/useTimeFormat'
 import {useCreateTimeEntryMutation, useUpdateTimeEntryMutation} from '@/client/queries/timeEntries'
 import type {UpdateTimeEntryInput} from '@/client/queries/timeEntries'
 import type {TimeEntryWritable} from '@/client/generated'
@@ -155,6 +165,8 @@ const createMutation = useCreateTimeEntryMutation()
 const updateMutation = useUpdateTimeEntryMutation()
 const authStore = useAuthStore()
 const projectList = useProjects()
+const {activeTimer} = useTimeTracking()
+const {store: timeFormat} = useTimeFormat()
 
 const isEditing = computed(() => props.entry != null)
 
@@ -175,6 +187,29 @@ const from = computed({
 	},
 })
 const to = ref<Date | null>(null)
+
+// Mirrors the server: starting a timer at a past start ends the user's entries spanning it there.
+const backdateTo = computed(() => {
+	const date = start.value.date
+	if (isEditing.value || !start.value.chosen || date === null || date >= new Date()) {
+		return null
+	}
+	return date
+})
+const spanningFilter = computed(() => {
+	const at = backdateTo.value?.toISOString()
+	return at === undefined ? '' : `user_id = ${authStore.info?.id} && start_time < '${at}' && end_time > '${at}'`
+})
+const {entries: spanningEntries} = useTimeEntries(spanningFilter, {enabled: () => spanningFilter.value !== ''})
+const backdatedStopAt = computed(() => {
+	const at = backdateTo.value
+	if (at === null) {
+		return null
+	}
+	const runningStart = parseDateOrNull(activeTimer.value?.start_time)
+	const spansRunning = runningStart !== null && runningStart < at
+	return spansRunning || spanningEntries.value.length > 0 ? at : null
+})
 const comment = ref('')
 const isSaving = ref(false)
 

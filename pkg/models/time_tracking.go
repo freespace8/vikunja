@@ -69,9 +69,12 @@ func (*TimeEntry) TableName() string {
 func (te *TimeEntry) Create(s *xorm.Session, a web.Auth) (err error) {
 	te.UserID = a.GetID()
 
-	// Starting a new running timer auto-stops the previous one; a completed
-	// manual entry (EndTime set) must leave the running timer alone.
+	// Starting a new running timer ends the entries it overlaps and auto-stops the
+	// previous one; a completed manual entry (EndTime set) must leave both alone.
 	if te.EndTime == nil {
+		if err = endEntriesSpanning(s, te.UserID, te.StartTime); err != nil {
+			return err
+		}
 		if _, err = stopRunningTimerForUser(s, te.UserID); err != nil {
 			return err
 		}
@@ -102,6 +105,44 @@ func (te *TimeEntry) Create(s *xorm.Session, a web.Auth) (err error) {
 
 func (te *TimeEntry) ReadOne(_ *xorm.Session, _ web.Auth) (err error) {
 	// entry got already fetched in CanRead, nothing left to do here
+	return nil
+}
+
+// endEntriesSpanning ends the user's entries that span at, so a timer started
+// there doesn't overlap them. A running timer counts as ending now.
+func endEntriesSpanning(s *xorm.Session, userID int64, at time.Time) error {
+	if !at.Before(time.Now()) {
+		return nil
+	}
+
+	// UTC: the driver drops a bound parameter's offset.
+	spanning := []*TimeEntry{}
+	err := s.Where(builder.And(
+		builder.Eq{"user_id": userID},
+		builder.Lt{"start_time": at.UTC()},
+		builder.Or(builder.IsNull{"end_time"}, builder.Gt{"end_time": at.UTC()}),
+	)).Find(&spanning)
+	if err != nil || len(spanning) == 0 {
+		return err
+	}
+
+	for _, entry := range spanning {
+		entry.EndTime = &at
+		if _, err = s.ID(entry.ID).Cols("end_time").Update(entry); err != nil {
+			return err
+		}
+	}
+
+	doer, err := user.GetUserByID(s, userID)
+	if err != nil {
+		return err
+	}
+	if err = addUsersToTimeEntries(s, spanning); err != nil {
+		return err
+	}
+	for _, entry := range spanning {
+		events.DispatchOnCommit(s, &TimeEntryUpdatedEvent{TimeEntry: entry, Doer: doer})
+	}
 	return nil
 }
 
