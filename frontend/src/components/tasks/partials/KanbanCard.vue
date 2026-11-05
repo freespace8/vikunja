@@ -81,6 +81,7 @@
 			<ProgressBar
 				v-if="task.percent_done > 0"
 				class="task-progress"
+				is-primary
 				:value="task.percent_done * 100"
 			/>
 			<div class="footer">

@@ -141,6 +141,12 @@ describe('KanbanCard', () => {
 		expect(time.attributes('datetime')).toBe(updated)
 	})
 
+	it('draws the progress bar in the theme color', () => {
+		const wrapper = mountCard(normalizeTask({id: 11, project_id: 1, title: 'Half done', percent_done: 0.5}))
+
+		expect(wrapper.getComponent({name: 'ProgressBar'}).props('isPrimary')).toBe(true)
+	})
+
 	// The ctrl click itself is covered by e2e project-view-kanban.spec.ts, which reads the task back from the API.
 	it('announces a completed recurring task to the board', async () => {
 		sdk.patchTasksRead.mockResolvedValue({data: {...recurringTask, done: true}})
