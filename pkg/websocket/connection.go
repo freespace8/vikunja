@@ -339,6 +339,7 @@ var validEvents = map[string]bool{
 	"timer.created":        true,
 	"timer.updated":        true,
 	"timer.deleted":        true,
+	"project.changed":      true,
 }
 
 func isValidEvent(event string) bool {
