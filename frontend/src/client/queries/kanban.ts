@@ -62,6 +62,11 @@ export const bucketKeys = {
 	list: (project: number, view: number) => [...bucketKeys.all, project, view] as const,
 }
 
+// 看板结构的 mutation 也会写 BoardData，实时刷新据此避让，避免覆盖乐观更新。
+export const kanbanMutationKeys = {
+	all: ['kanban', 'mutation'] as const,
+}
+
 export function bucketsQuery(project: number, view: number) {
 	return queryOptions({
 		queryKey: bucketKeys.list(project, view),

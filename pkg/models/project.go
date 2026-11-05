@@ -1284,6 +1284,12 @@ func UpdateProject(s *xorm.Session, project *Project, auth web.Auth, updateProje
 		if err != nil {
 			return err
 		}
+
+		events.DispatchOnCommit(s, &ProjectParentChangedEvent{
+			Project:            project,
+			OldParentProjectID: storedProject.ParentProjectID,
+			Doer:               doerFromAuth(s, auth),
+		})
 	}
 
 	events.DispatchOnCommit(s, &ProjectUpdatedEvent{
