@@ -168,15 +168,24 @@ func getUserIDsWithProjectAccessFiltered(s *xorm.Session, projectID int64, teamF
 }
 
 func getProjectAccessForTasks(s *xorm.Session, tasks []*Task) (accessByProject map[int64]map[int64]bool, userIDs []int64, err error) {
+	projectIDs := make([]int64, 0, len(tasks))
+	for _, task := range tasks {
+		projectIDs = append(projectIDs, task.ProjectID)
+	}
+	return getProjectAccessForProjectIDs(s, projectIDs)
+}
+
+// getProjectAccessForProjectIDs maps every project to the users who can read it and returns the deduplicated union.
+func getProjectAccessForProjectIDs(s *xorm.Session, projectIDs []int64) (accessByProject map[int64]map[int64]bool, userIDs []int64, err error) {
 	accessByProject = map[int64]map[int64]bool{}
 	seen := map[int64]bool{}
-	for _, task := range tasks {
-		if _, done := accessByProject[task.ProjectID]; done {
+	for _, projectID := range projectIDs {
+		if _, done := accessByProject[projectID]; done {
 			continue
 		}
 		access := map[int64]bool{}
-		accessByProject[task.ProjectID] = access
-		uids, err := getUserIDsWithProjectAccess(s, task.ProjectID)
+		accessByProject[projectID] = access
+		uids, err := getUserIDsWithProjectAccess(s, projectID)
 		if err != nil {
 			if IsErrProjectDoesNotExist(err) {
 				continue

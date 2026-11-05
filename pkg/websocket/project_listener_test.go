@@ -22,13 +22,13 @@ import (
 	"code.vikunja.io/api/pkg/events"
 	"code.vikunja.io/api/pkg/models"
 
+	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// Fixtures: project 3 is owned by user 3 and shared with users 1 and 2 (team 1
-// holds users 1 and 2). Project 40 is a child of project 3 owned by user 1.
-// Project 1 is owned by user 1 and has view 1.
+// 夹具：项目 3 属于用户 3，通过团队 1 共享给用户 1 和 2；项目 40 是项目 3 的子项目，属于用户 1；
+// 项目 1 属于用户 1，只有他自己能读。
 func TestProjectChangeListener(t *testing.T) {
 	t.Run("pushes a task update to every user who can read the project", func(t *testing.T) {
 		setupDBTest(t)
@@ -39,7 +39,9 @@ func TestProjectChangeListener(t *testing.T) {
 			GetHub().Register(conns[userID])
 		}
 
-		event := &models.TaskUpdatedEvent{Task: &models.Task{ID: 42, ProjectID: 3}}
+		event := &models.TaskUpdatedEvent{
+			Task: taskInProject(42, 3),
+		}
 		events.TestListener(t, event, &ProjectChangeListener{wsEvent: event.Name()})
 
 		for userID, conn := range conns {
@@ -48,9 +50,9 @@ func TestProjectChangeListener(t *testing.T) {
 			assert.Equal(t, "project.changed", msg.Event)
 			payload, ok := msg.Data.(projectChangedPayload)
 			require.True(t, ok, "payload must be the id-only change")
-			assert.Equal(t, int64(3), payload.ProjectID)
 			assert.Equal(t, []int64{3}, payload.ProjectIDs)
 			assert.Equal(t, int64(42), payload.TaskID)
+			assert.Equal(t, projectChangeLayout, payload.Kind)
 		}
 	})
 
@@ -60,7 +62,9 @@ func TestProjectChangeListener(t *testing.T) {
 		conn := projectChangeConn(5)
 		GetHub().Register(conn)
 
-		event := &models.TaskUpdatedEvent{Task: &models.Task{ID: 42, ProjectID: 3}}
+		event := &models.TaskUpdatedEvent{
+			Task: taskInProject(42, 3),
+		}
 		events.TestListener(t, event, &ProjectChangeListener{wsEvent: event.Name()})
 
 		assert.Empty(t, conn.send)
@@ -70,13 +74,17 @@ func TestProjectChangeListener(t *testing.T) {
 		setupDBTest(t)
 		InitHub()
 		conn := &Connection{
-			userID:        1,
-			subscriptions: map[string]bool{"notification.created": true},
-			send:          make(chan OutgoingMessage, 16),
+			userID: 1,
+			subscriptions: map[string]bool{
+				"notification.created": true,
+			},
+			send: make(chan OutgoingMessage, 16),
 		}
 		GetHub().Register(conn)
 
-		event := &models.TaskUpdatedEvent{Task: &models.Task{ID: 42, ProjectID: 3}}
+		event := &models.TaskUpdatedEvent{
+			Task: taskInProject(42, 3),
+		}
 		events.TestListener(t, event, &ProjectChangeListener{wsEvent: event.Name()})
 
 		assert.Empty(t, conn.send)
@@ -88,14 +96,133 @@ func TestProjectChangeListener(t *testing.T) {
 		conn := projectChangeConn(2)
 		GetHub().Register(conn)
 
-		event := &models.TaskUpdatedEvent{Task: &models.Task{ID: 42, ProjectID: 40}}
+		event := &models.TaskUpdatedEvent{
+			Task: taskInProject(42, 40),
+		}
 		events.TestListener(t, event, &ProjectChangeListener{wsEvent: event.Name()})
 
 		require.Len(t, conn.send, 1)
 		payload, ok := (<-conn.send).Data.(projectChangedPayload)
 		require.True(t, ok)
-		assert.Equal(t, int64(40), payload.ProjectID)
 		assert.ElementsMatch(t, []int64{40, 3}, payload.ProjectIDs)
+	})
+
+	t.Run("a comment only marks the task content", func(t *testing.T) {
+		setupDBTest(t)
+		InitHub()
+		conn := projectChangeConn(1)
+		GetHub().Register(conn)
+
+		event := &models.TaskCommentCreatedEvent{
+			Task: taskInProject(42, 3),
+		}
+		events.TestListener(t, event, &ProjectChangeListener{wsEvent: event.Name()})
+
+		require.Len(t, conn.send, 1)
+		payload, ok := (<-conn.send).Data.(projectChangedPayload)
+		require.True(t, ok)
+		assert.Equal(t, projectChangeContent, payload.Kind)
+		assert.Equal(t, int64(42), payload.TaskID)
+		assert.Equal(t, []int64{3}, payload.ProjectIDs)
+	})
+
+	t.Run("a batch create notifies each project once", func(t *testing.T) {
+		setupDBTest(t)
+		InitHub()
+		conn := projectChangeConn(1)
+		GetHub().Register(conn)
+
+		event := &models.TasksBatchCreatedEvent{
+			Tasks: []*models.Task{
+				taskInProject(1, 3),
+				taskInProject(2, 3),
+				taskInProject(3, 40),
+			},
+		}
+		events.TestListener(t, event, &ProjectChangeListener{wsEvent: event.Name()})
+
+		require.Len(t, conn.send, 1)
+		payload, ok := (<-conn.send).Data.(projectChangedPayload)
+		require.True(t, ok)
+		assert.Equal(t, projectChangeLayout, payload.Kind)
+		assert.Equal(t, int64(0), payload.TaskID)
+		assert.ElementsMatch(t, []int64{3, 40}, payload.ProjectIDs)
+	})
+
+	t.Run("a task moved to another project reaches the new project's users", func(t *testing.T) {
+		setupDBTest(t)
+		InitHub()
+		// User 3 can read project 3 but not project 1, which the task moved into.
+		conn := projectChangeConn(3)
+		GetHub().Register(conn)
+
+		event := &models.TaskUpdatedEvent{
+			Task: taskInProject(42, 1),
+		}
+		events.TestListener(t, event, &ProjectChangeListener{wsEvent: event.Name()})
+
+		assert.Empty(t, conn.send)
+	})
+
+	t.Run("a project moved to the trash notifies the users of the project and its parent", func(t *testing.T) {
+		setupDBTest(t)
+		InitHub()
+		conn := projectChangeConn(2)
+		GetHub().Register(conn)
+
+		event := &models.ProjectDeletedEvent{
+			Project: projectInParent(40, 3),
+		}
+		events.TestListener(t, event, &ProjectChangeListener{wsEvent: event.Name()})
+
+		require.Len(t, conn.send, 1)
+		payload, ok := (<-conn.send).Data.(projectChangedPayload)
+		require.True(t, ok)
+		assert.Equal(t, projectChangeStructure, payload.Kind)
+		assert.ElementsMatch(t, []int64{40, 3}, payload.ProjectIDs)
+	})
+
+	t.Run("a bucket change notifies the project's users", func(t *testing.T) {
+		setupDBTest(t)
+		InitHub()
+		conn := projectChangeConn(2)
+		GetHub().Register(conn)
+
+		event := &models.BucketCreatedEvent{
+			Bucket: &models.Bucket{
+				ID:            7,
+				ProjectViewID: 4,
+			},
+			ProjectID: 40,
+		}
+		events.TestListener(t, event, &ProjectChangeListener{wsEvent: event.Name()})
+
+		require.Len(t, conn.send, 1)
+		payload, ok := (<-conn.send).Data.(projectChangedPayload)
+		require.True(t, ok)
+		assert.Equal(t, projectChangeStructure, payload.Kind)
+		assert.ElementsMatch(t, []int64{40, 3}, payload.ProjectIDs)
+	})
+
+	t.Run("a project view change notifies the project's users", func(t *testing.T) {
+		setupDBTest(t)
+		InitHub()
+		conn := projectChangeConn(2)
+		GetHub().Register(conn)
+
+		event := &models.ProjectViewUpdatedEvent{
+			View: &models.ProjectView{
+				ID:        5,
+				ProjectID: 3,
+			},
+		}
+		events.TestListener(t, event, &ProjectChangeListener{wsEvent: event.Name()})
+
+		require.Len(t, conn.send, 1)
+		payload, ok := (<-conn.send).Data.(projectChangedPayload)
+		require.True(t, ok)
+		assert.Equal(t, projectChangeStructure, payload.Kind)
+		assert.ElementsMatch(t, []int64{3}, payload.ProjectIDs)
 	})
 
 	t.Run("resolves the project of a positions recalculated event", func(t *testing.T) {
@@ -105,15 +232,41 @@ func TestProjectChangeListener(t *testing.T) {
 		GetHub().Register(conn)
 
 		event := &models.TaskPositionsRecalculatedEvent{
-			NewTaskPositions: []*models.TaskPosition{{TaskID: 1, ProjectViewID: 1, Position: 12}},
+			NewTaskPositions: []*models.TaskPosition{
+				{
+					TaskID:        1,
+					ProjectViewID: 1,
+					Position:      12,
+				},
+			},
 		}
 		events.TestListener(t, event, &ProjectChangeListener{wsEvent: event.Name()})
 
 		require.Len(t, conn.send, 1)
 		payload, ok := (<-conn.send).Data.(projectChangedPayload)
 		require.True(t, ok)
-		assert.Equal(t, int64(1), payload.ProjectID)
 		assert.Equal(t, []int64{1}, payload.ProjectIDs)
+	})
+
+	t.Run("skips the pseudo view of a saved filter", func(t *testing.T) {
+		setupDBTest(t)
+		InitHub()
+		conn := projectChangeConn(1)
+		GetHub().Register(conn)
+
+		// Saved filter views have negative ids and no row in project_views.
+		event := &models.TaskPositionsRecalculatedEvent{
+			NewTaskPositions: []*models.TaskPosition{
+				{
+					TaskID:        1,
+					ProjectViewID: -15,
+					Position:      12,
+				},
+			},
+		}
+		events.TestListener(t, event, &ProjectChangeListener{wsEvent: event.Name()})
+
+		assert.Empty(t, conn.send)
 	})
 
 	t.Run("a purged project still notifies the users of its parent", func(t *testing.T) {
@@ -123,23 +276,49 @@ func TestProjectChangeListener(t *testing.T) {
 		GetHub().Register(conn)
 
 		// Project 999 no longer exists; the event's parent id is the only way to its ancestors.
-		parent := int64(3)
-		event := &models.ProjectPurgedEvent{Project: &models.Project{ID: 999, ParentProjectID: &parent}}
+		event := &models.ProjectPurgedEvent{
+			Project: projectInParent(999, 3),
+		}
 		events.TestListener(t, event, &ProjectChangeListener{wsEvent: event.Name()})
 
 		require.Len(t, conn.send, 1)
 		payload, ok := (<-conn.send).Data.(projectChangedPayload)
 		require.True(t, ok)
-		assert.Equal(t, int64(999), payload.ProjectID)
 		assert.ElementsMatch(t, []int64{999, 3}, payload.ProjectIDs)
 		assert.Equal(t, int64(0), payload.TaskID)
 	})
+
+	t.Run("returns an error for a payload it cannot decode", func(t *testing.T) {
+		setupDBTest(t)
+		InitHub()
+
+		listener := &ProjectChangeListener{wsEvent: (&models.TaskUpdatedEvent{}).Name()}
+		err := listener.Handle(message.NewMessage("test", []byte("not json")))
+
+		require.Error(t, err)
+	})
+}
+
+func taskInProject(taskID, projectID int64) *models.Task {
+	return &models.Task{
+		ID:        taskID,
+		ProjectID: projectID,
+	}
+}
+
+func projectInParent(projectID, parentID int64) *models.Project {
+	return &models.Project{
+		ID:              projectID,
+		ParentProjectID: new(parentID),
+	}
 }
 
 func projectChangeConn(userID int64) *Connection {
 	return &Connection{
-		userID:        userID,
-		subscriptions: map[string]bool{"project.changed": true},
-		send:          make(chan OutgoingMessage, 16),
+		userID: userID,
+		subscriptions: map[string]bool{
+			"project.changed": true,
+		},
+		send: make(chan OutgoingMessage, 16),
 	}
 }

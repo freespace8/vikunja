@@ -17,71 +17,49 @@
 package models
 
 import (
+	"fmt"
+	"sort"
+
 	"xorm.io/xorm"
 )
 
-// GetProjectIDsWithAncestors returns projectID together with the ids of all
-// projects above it in the hierarchy. Callers notify every one of them because
-// a parent's views aggregate the tasks of its sub-projects.
-//
-// knownParentID short-circuits the first hop for callers that already hold the
-// project (project events carry it): a project that was just trashed or purged
-// can no longer be loaded, but its parent usually still can. Pass nil to resolve
-// the parent from the database. A project that does not exist at all yields only
-// the ids resolved so far.
+// GetProjectIDsWithAncestors 返回项目自身和它的所有祖先，因为父项目的视图会聚合子项目的任务。
+// knownParentID 供已知父项目的调用方使用：项目被清除后闭包表里已经没有它的记录，
+// 只能靠事件里带的父项目 ID 继续向上解析。传 nil 时完全从数据库解析。
 func GetProjectIDsWithAncestors(s *xorm.Session, projectID int64, knownParentID *int64) ([]int64, error) {
-	ids := make([]int64, 0, 4)
-	visited := map[int64]bool{}
-	parent := knownParentID
-
-	for current := projectID; current > 0 && !visited[current]; {
-		visited[current] = true
-		ids = append(ids, current)
-
-		if parent != nil {
-			current = *parent
-			// The caller's value describes this project only; further hops come from the database.
-			parent = nil
-			continue
-		}
-
-		project, err := GetProjectSimpleByID(s, current)
-		if err != nil {
-			if IsErrProjectDoesNotExist(err) {
-				break
-			}
-			return nil, err
-		}
-		current = project.parentID()
+	parents, err := GetAllParentProjects(s, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("get the parents of project %d: %w", projectID, err)
 	}
+
+	if len(parents) == 0 && knownParentID != nil && *knownParentID > 0 {
+		parents, err = GetAllParentProjects(s, *knownParentID)
+		if err != nil {
+			return nil, fmt.Errorf("get the parents of project %d: %w", *knownParentID, err)
+		}
+	}
+
+	ids := make([]int64, 0, len(parents)+1)
+	if projectID > 0 {
+		ids = append(ids, projectID)
+	}
+	for id := range parents {
+		if id != projectID && id > 0 {
+			ids = append(ids, id)
+		}
+	}
+	// map 的遍历顺序不固定，排序让推送的 payload 稳定可测。
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 
 	return ids, nil
 }
 
-// GetUserIDsWithAccessToProjects returns the deduplicated ids of every user who
-// can read at least one of the given projects. A project removed before the
-// lookup runs contributes no users instead of failing the whole call.
+// GetUserIDsWithAccessToProjects 返回至少能读其中一个项目的所有用户，已去重。
+// 已在查找前被删除的项目不贡献用户，而不是让整次调用失败。
 func GetUserIDsWithAccessToProjects(s *xorm.Session, projectIDs []int64) ([]int64, error) {
-	seen := make(map[int64]bool, len(projectIDs))
-	userIDs := make([]int64, 0, len(projectIDs))
-
-	for _, projectID := range projectIDs {
-		uids, err := getUserIDsWithProjectAccess(s, projectID)
-		if err != nil {
-			if IsErrProjectDoesNotExist(err) {
-				continue
-			}
-			return nil, err
-		}
-
-		for _, uid := range uids {
-			if seen[uid] {
-				continue
-			}
-			seen[uid] = true
-			userIDs = append(userIDs, uid)
-		}
+	_, userIDs, err := getProjectAccessForProjectIDs(s, projectIDs)
+	if err != nil {
+		return nil, fmt.Errorf("get the users with access to projects %v: %w", projectIDs, err)
 	}
-
 	return userIDs, nil
 }

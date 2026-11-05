@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"code.vikunja.io/api/pkg/db"
+	"code.vikunja.io/api/pkg/events"
 	"code.vikunja.io/api/pkg/user"
 	"code.vikunja.io/api/pkg/web"
 
@@ -273,7 +274,7 @@ func (pv *ProjectView) ReadOne(s *xorm.Session, _ web.Auth) (err error) {
 // @Failure 403 {object} web.HTTPError "The user does not have access to the project view"
 // @Failure 500 {object} models.Message "Internal error"
 // @Router /projects/{project}/views/{id} [delete]
-func (pv *ProjectView) Delete(s *xorm.Session, _ web.Auth) (err error) {
+func (pv *ProjectView) Delete(s *xorm.Session, a web.Auth) (err error) {
 	// Resolve the view under the path project first: the buckets/positions below are deleted by
 	// view id alone, so without this guard a delete scoped to the wrong parent project would still
 	// wipe another project's buckets and positions while matching zero project_views rows.
@@ -294,6 +295,13 @@ func (pv *ProjectView) Delete(s *xorm.Session, _ web.Auth) (err error) {
 	}
 
 	_, err = s.Where("project_view_id = ?", pv.ID).Delete(&TaskPosition{})
+	if err != nil {
+		return
+	}
+	events.DispatchOnCommit(s, &ProjectViewDeletedEvent{
+		View: pv,
+		Doer: doerFromAuth(s, a),
+	})
 	return
 }
 
@@ -311,7 +319,15 @@ func (pv *ProjectView) Delete(s *xorm.Session, _ web.Auth) (err error) {
 // @Failure 500 {object} models.Message "Internal error"
 // @Router /projects/{project}/views [put]
 func (pv *ProjectView) Create(s *xorm.Session, a web.Auth) (err error) {
-	return createProjectView(s, pv, a, true, true)
+	err = createProjectView(s, pv, a, true, true)
+	if err != nil {
+		return
+	}
+	events.DispatchOnCommit(s, &ProjectViewCreatedEvent{
+		View: pv,
+		Doer: doerFromAuth(s, a),
+	})
+	return
 }
 
 // Each filter bucket costs one task query per kanban read.
@@ -692,7 +708,15 @@ func (pv *ProjectView) Update(s *xorm.Session, a web.Auth) (err error) {
 		return
 	}
 
-	return syncManualKanbanBuckets(s, a, pv, oldView)
+	err = syncManualKanbanBuckets(s, a, pv, oldView)
+	if err != nil {
+		return
+	}
+	events.DispatchOnCommit(s, &ProjectViewUpdatedEvent{
+		View: pv,
+		Doer: doerFromAuth(s, a),
+	})
+	return
 }
 
 func syncManualKanbanBuckets(s *xorm.Session, a web.Auth, pv, oldView *ProjectView) (err error) {

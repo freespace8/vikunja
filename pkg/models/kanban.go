@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"code.vikunja.io/api/pkg/events"
 	"code.vikunja.io/api/pkg/log"
 	"code.vikunja.io/api/pkg/user"
 	"code.vikunja.io/api/pkg/web"
@@ -336,6 +337,14 @@ func (b *Bucket) Create(s *xorm.Session, a web.Auth) (err error) {
 
 	b.Position = calculateDefaultPosition(b.ID, b.Position)
 	_, err = s.Where("id = ?", b.ID).Update(b)
+	if err != nil {
+		return
+	}
+	events.DispatchOnCommit(s, &BucketCreatedEvent{
+		Bucket:    b,
+		ProjectID: b.ProjectID,
+		Doer:      doerFromAuth(s, a),
+	})
 	return
 }
 
@@ -355,7 +364,7 @@ func (b *Bucket) Create(s *xorm.Session, a web.Auth) (err error) {
 // @Failure 404 {object} web.HTTPError "The bucket does not exist."
 // @Failure 500 {object} models.Message "Internal error"
 // @Router /projects/{projectID}/views/{view}/buckets/{bucketID} [post]
-func (b *Bucket) Update(s *xorm.Session, _ web.Auth) (err error) {
+func (b *Bucket) Update(s *xorm.Session, a web.Auth) (err error) {
 	_, err = s.
 		Where("id = ?", b.ID).
 		Cols(
@@ -364,6 +373,14 @@ func (b *Bucket) Update(s *xorm.Session, _ web.Auth) (err error) {
 			"position",
 		).
 		Update(b)
+	if err != nil {
+		return
+	}
+	events.DispatchOnCommit(s, &BucketUpdatedEvent{
+		Bucket:    b,
+		ProjectID: b.ProjectID,
+		Doer:      doerFromAuth(s, a),
+	})
 	return
 }
 
@@ -432,5 +449,13 @@ func (b *Bucket) Delete(s *xorm.Session, a web.Auth) (err error) {
 
 	// Remove the bucket itself
 	_, err = s.Where("id = ?", b.ID).Delete(&Bucket{})
+	if err != nil {
+		return
+	}
+	events.DispatchOnCommit(s, &BucketDeletedEvent{
+		Bucket:    b,
+		ProjectID: b.ProjectID,
+		Doer:      doerFromAuth(s, a),
+	})
 	return
 }
