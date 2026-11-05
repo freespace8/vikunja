@@ -119,6 +119,16 @@ func hardDeleteProject(s *xorm.Session, p *Project, doer *user.User) error {
 
 // Children get their ancestors passed down: deleting p's closure rows also drops their links to p.
 func hardDeleteProjectTree(s *xorm.Session, p *Project, doer *user.User, ancestorIDs []int64) (err error) {
+	// 清除后项目和权限行都不存在了，推送的接收者必须在删除前算好。
+	changeProjectIDs, err := GetProjectIDsWithAncestors(s, p.ID, p.ParentProjectID)
+	if err != nil {
+		return err
+	}
+	changeRecipients, err := GetProjectChangeRecipients(s, changeProjectIDs)
+	if err != nil {
+		return err
+	}
+
 	// Lock first: the task loop below deletes task_positions rows before the views are dropped further down.
 	_, err = lockProjectViewsForPositionUpdate(s, p.ID)
 	if err != nil {
@@ -224,6 +234,9 @@ func hardDeleteProjectTree(s *xorm.Session, p *Project, doer *user.User, ancesto
 		Project:     p,
 		Doer:        doer,
 		AncestorIDs: ancestorIDs,
+	})
+	events.DispatchOnCommit(s, &ProjectChangePurgedEvent{
+		Recipients: changeRecipients,
 	})
 
 	children := []*Project{}

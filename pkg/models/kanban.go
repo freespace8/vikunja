@@ -340,11 +340,14 @@ func (b *Bucket) Create(s *xorm.Session, a web.Auth) (err error) {
 	if err != nil {
 		return
 	}
-	events.DispatchOnCommit(s, &BucketCreatedEvent{
-		Bucket:    b,
-		ProjectID: b.ProjectID,
-		Doer:      doerFromAuth(s, a),
-	})
+	// 默认分桶在项目建好之前创建，ProjectID 为 0，没有项目可以通知。
+	if b.ProjectID > 0 {
+		events.DispatchOnCommit(s, &BucketCreatedEvent{
+			Bucket:    b,
+			ProjectID: b.ProjectID,
+			Doer:      doerFromAuth(s, a),
+		})
+	}
 	return
 }
 

@@ -96,6 +96,26 @@ func TestBucketChangeEvents(t *testing.T) {
 		require.Len(t, dispatched, 1)
 		assert.Equal(t, int64(2), dispatched[0].(*BucketDeletedEvent).Bucket.ID)
 	})
+
+	t.Run("default buckets of a new kanban view are not dispatched", func(t *testing.T) {
+		db.LoadAndAssertFixtures(t)
+		s := db.NewSession()
+		defer s.Close()
+		events.ClearDispatchedEvents()
+
+		// 默认分桶在视图存在前创建，ProjectID 还是 0，没有项目可以通知。
+		view := &ProjectView{
+			ProjectID: 1,
+			Title:     "New Kanban",
+			ViewKind:  ProjectViewKindKanban,
+		}
+		require.NoError(t, view.Create(s, u))
+		require.NoError(t, s.Commit())
+		events.DispatchPending(context.Background(), s)
+
+		assert.Empty(t, events.GetDispatchedEvents((&BucketCreatedEvent{}).Name()))
+		assert.Len(t, events.GetDispatchedEvents((&ProjectViewCreatedEvent{}).Name()), 1)
+	})
 }
 
 func TestProjectViewChangeEvents(t *testing.T) {

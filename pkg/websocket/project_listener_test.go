@@ -17,10 +17,12 @@
 package websocket
 
 import (
+	"context"
 	"testing"
 
 	"code.vikunja.io/api/pkg/events"
 	"code.vikunja.io/api/pkg/models"
+	"code.vikunja.io/api/pkg/user"
 
 	"github.com/ThreeDotsLabs/watermill/message"
 	"github.com/stretchr/testify/assert"
@@ -152,7 +154,7 @@ func TestProjectChangeListener(t *testing.T) {
 	t.Run("a task moved to another project reaches the new project's users", func(t *testing.T) {
 		setupDBTest(t)
 		InitHub()
-		// User 3 can read project 3 but not project 1, which the task moved into.
+		// 用户 3 能读项目 3，但任务移入的项目 1 对他不可见。
 		conn := projectChangeConn(3)
 		GetHub().Register(conn)
 
@@ -164,22 +166,112 @@ func TestProjectChangeListener(t *testing.T) {
 		assert.Empty(t, conn.send)
 	})
 
-	t.Run("a project moved to the trash notifies the users of the project and its parent", func(t *testing.T) {
-		setupDBTest(t)
+	t.Run("trashing a project reaches its own users and the parent's", func(t *testing.T) {
+		s := setupDBTest(t)
 		InitHub()
-		conn := projectChangeConn(2)
+		conns := map[int64]*Connection{}
+		for _, userID := range []int64{1, 2} {
+			conns[userID] = projectChangeConn(userID)
+			GetHub().Register(conns[userID])
+		}
+
+		require.NoError(t, (&models.Project{ID: 40}).Delete(s, &user.User{ID: 1}))
+		require.NoError(t, s.Commit())
+		events.ClearDispatchedEvents()
+		events.DispatchPending(context.Background(), s)
+
+		deleted := events.GetDispatchedEvents((&models.ProjectDeletedEvent{}).Name())
+		require.Len(t, deleted, 1)
+		events.TestListener(t, deleted[0], &ProjectChangeListener{wsEvent: deleted[0].Name()})
+
+		// 用户 1 是项目 40 的拥有者，用户 2 通过父项目 3 的共享读到它。
+		for userID, conn := range conns {
+			require.Len(t, conn.send, 1, "user %d should be notified", userID)
+			payload, ok := (<-conn.send).Data.(projectChangedPayload)
+			require.True(t, ok)
+			assert.Equal(t, projectChangeStructure, payload.Kind)
+			assert.ElementsMatch(t, []int64{40, 3}, payload.ProjectIDs)
+		}
+	})
+
+	t.Run("trashing a top-level project reaches its owner", func(t *testing.T) {
+		s := setupDBTest(t)
+		InitHub()
+		conn := projectChangeConn(1)
 		GetHub().Register(conn)
 
-		event := &models.ProjectDeletedEvent{
-			Project: projectInParent(40, 3),
+		require.NoError(t, (&models.Project{ID: 1}).Delete(s, &user.User{ID: 1}))
+		require.NoError(t, s.Commit())
+		events.ClearDispatchedEvents()
+		events.DispatchPending(context.Background(), s)
+
+		deleted := events.GetDispatchedEvents((&models.ProjectDeletedEvent{}).Name())
+		require.Len(t, deleted, 1)
+		events.TestListener(t, deleted[0], &ProjectChangeListener{wsEvent: deleted[0].Name()})
+
+		require.Len(t, conn.send, 1)
+		payload, ok := (<-conn.send).Data.(projectChangedPayload)
+		require.True(t, ok)
+		assert.Equal(t, []int64{1}, payload.ProjectIDs)
+	})
+
+	t.Run("a user shared only on the sub-project does not get the parent id", func(t *testing.T) {
+		s := setupDBTest(t)
+		InitHub()
+		conn := projectChangeConn(5)
+		GetHub().Register(conn)
+		_, err := s.Insert(&models.ProjectUser{
+			UserID:     5,
+			ProjectID:  40,
+			Permission: models.PermissionRead,
+		})
+		require.NoError(t, err)
+		require.NoError(t, s.Commit())
+
+		event := &models.TaskUpdatedEvent{
+			Task: taskInProject(42, 40),
 		}
 		events.TestListener(t, event, &ProjectChangeListener{wsEvent: event.Name()})
 
 		require.Len(t, conn.send, 1)
 		payload, ok := (<-conn.send).Data.(projectChangedPayload)
 		require.True(t, ok)
+		assert.Equal(t, []int64{40}, payload.ProjectIDs)
+	})
+
+	t.Run("a reparented project reaches the users of the old parent", func(t *testing.T) {
+		s := setupDBTest(t)
+		InitHub()
+		conn := projectChangeConn(5)
+		GetHub().Register(conn)
+		// 用户 5 只通过父项目 41 拿到权限，新的父项目 7 对他不可见。
+		_, err := s.Insert(&models.ProjectUser{
+			UserID:     5,
+			ProjectID:  41,
+			Permission: models.PermissionRead,
+		})
+		require.NoError(t, err)
+		require.NoError(t, s.Commit())
+
+		project, err := models.GetProjectSimpleByID(s, 42)
+		require.NoError(t, err)
+		newParent := int64(7)
+		project.ParentProjectID = &newParent
+		require.NoError(t, project.Update(s, &user.User{ID: 6}))
+		require.NoError(t, s.Commit())
+		events.ClearDispatchedEvents()
+		events.DispatchPending(context.Background(), s)
+
+		changed := events.GetDispatchedEvents((&models.ProjectParentChangedEvent{}).Name())
+		require.Len(t, changed, 1)
+		events.TestListener(t, changed[0], &ProjectChangeListener{wsEvent: changed[0].Name()})
+
+		require.Len(t, conn.send, 1)
+		payload, ok := (<-conn.send).Data.(projectChangedPayload)
+		require.True(t, ok)
 		assert.Equal(t, projectChangeStructure, payload.Kind)
-		assert.ElementsMatch(t, []int64{40, 3}, payload.ProjectIDs)
+		// 换父项目后用户 5 读不到项目 42，只剩旧父项目要刷新。
+		assert.Equal(t, []int64{41}, payload.ProjectIDs)
 	})
 
 	t.Run("a bucket change notifies the project's users", func(t *testing.T) {
@@ -254,7 +346,7 @@ func TestProjectChangeListener(t *testing.T) {
 		conn := projectChangeConn(1)
 		GetHub().Register(conn)
 
-		// Saved filter views have negative ids and no row in project_views.
+		// 保存的筛选器视图是负数 ID 的伪视图，project_views 里没有对应行。
 		event := &models.TaskPositionsRecalculatedEvent{
 			NewTaskPositions: []*models.TaskPosition{
 				{
@@ -269,23 +361,34 @@ func TestProjectChangeListener(t *testing.T) {
 		assert.Empty(t, conn.send)
 	})
 
-	t.Run("a purged project still notifies the users of its parent", func(t *testing.T) {
-		setupDBTest(t)
+	t.Run("purging a project reaches the users captured before the delete", func(t *testing.T) {
+		s := setupDBTest(t)
 		InitHub()
-		conn := projectChangeConn(2)
+		conn := projectChangeConn(1)
 		GetHub().Register(conn)
 
-		// Project 999 no longer exists; the event's parent id is the only way to its ancestors.
-		event := &models.ProjectPurgedEvent{
-			Project: projectInParent(999, 3),
-		}
-		events.TestListener(t, event, &ProjectChangeListener{wsEvent: event.Name()})
+		// 项目 45 和它的子项目 46 已经在回收站里，清除后行和权限都会消失。
+		require.NoError(t, (&models.Project{ID: 45}).DeletePermanently(s, &user.User{ID: 1}))
+		require.NoError(t, s.Commit())
+		events.ClearDispatchedEvents()
+		events.DispatchPending(context.Background(), s)
 
-		require.Len(t, conn.send, 1)
-		payload, ok := (<-conn.send).Data.(projectChangedPayload)
-		require.True(t, ok)
-		assert.ElementsMatch(t, []int64{999, 3}, payload.ProjectIDs)
-		assert.Equal(t, int64(0), payload.TaskID)
+		purged := events.GetDispatchedEvents((&models.ProjectChangePurgedEvent{}).Name())
+		require.Len(t, purged, 2)
+		for _, event := range purged {
+			events.TestListener(t, event, &ProjectChangeListener{wsEvent: event.Name()})
+		}
+
+		require.Len(t, conn.send, 2)
+		pushed := [][]int64{}
+		for range purged {
+			payload, ok := (<-conn.send).Data.(projectChangedPayload)
+			require.True(t, ok)
+			assert.Equal(t, projectChangeStructure, payload.Kind)
+			assert.Equal(t, int64(0), payload.TaskID)
+			pushed = append(pushed, payload.ProjectIDs)
+		}
+		assert.Contains(t, pushed, []int64{45})
 	})
 
 	t.Run("returns an error for a payload it cannot decode", func(t *testing.T) {
@@ -303,13 +406,6 @@ func taskInProject(taskID, projectID int64) *models.Task {
 	return &models.Task{
 		ID:        taskID,
 		ProjectID: projectID,
-	}
-}
-
-func projectInParent(projectID, parentID int64) *models.Project {
-	return &models.Project{
-		ID:              projectID,
-		ParentProjectID: new(parentID),
 	}
 }
 

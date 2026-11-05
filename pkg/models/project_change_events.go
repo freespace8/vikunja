@@ -30,7 +30,6 @@ type BucketCreatedEvent struct {
 	Doer      *user.User `json:"doer"`
 }
 
-// Name defines the name for BucketCreatedEvent
 func (b *BucketCreatedEvent) Name() string {
 	return "bucket.created"
 }
@@ -42,7 +41,6 @@ type BucketUpdatedEvent struct {
 	Doer      *user.User `json:"doer"`
 }
 
-// Name defines the name for BucketUpdatedEvent
 func (b *BucketUpdatedEvent) Name() string {
 	return "bucket.updated"
 }
@@ -54,7 +52,6 @@ type BucketDeletedEvent struct {
 	Doer      *user.User `json:"doer"`
 }
 
-// Name defines the name for BucketDeletedEvent
 func (b *BucketDeletedEvent) Name() string {
 	return "bucket.deleted"
 }
@@ -65,7 +62,6 @@ type ProjectViewCreatedEvent struct {
 	Doer *user.User   `json:"doer"`
 }
 
-// Name defines the name for ProjectViewCreatedEvent
 func (p *ProjectViewCreatedEvent) Name() string {
 	return "project.view.created"
 }
@@ -76,7 +72,6 @@ type ProjectViewUpdatedEvent struct {
 	Doer *user.User   `json:"doer"`
 }
 
-// Name defines the name for ProjectViewUpdatedEvent
 func (p *ProjectViewUpdatedEvent) Name() string {
 	return "project.view.updated"
 }
@@ -87,7 +82,27 @@ type ProjectViewDeletedEvent struct {
 	Doer *user.User   `json:"doer"`
 }
 
-// Name defines the name for ProjectViewDeletedEvent
 func (p *ProjectViewDeletedEvent) Name() string {
 	return "project.view.deleted"
+}
+
+// ProjectParentChangedEvent 在项目换了父项目时发出：只带新父项目的项目事件推不到旧父项目的看板。
+type ProjectParentChangedEvent struct {
+	Project            *Project   `json:"project"`
+	OldParentProjectID *int64     `json:"old_parent_project_id"`
+	Doer               *user.User `json:"doer"`
+}
+
+func (p *ProjectParentChangedEvent) Name() string {
+	return "project.parent.changed"
+}
+
+// ProjectChangePurgedEvent 在项目被永久清除后发出。
+// 项目和权限行都已删除，接收者与项目 ID 必须在删除前算好，所以事件自带这些结果。
+type ProjectChangePurgedEvent struct {
+	Recipients []ProjectChangeRecipient `json:"recipients"`
+}
+
+func (p *ProjectChangePurgedEvent) Name() string {
+	return "project.purged.change"
 }

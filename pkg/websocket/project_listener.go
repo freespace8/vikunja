@@ -62,6 +62,8 @@ type projectChange struct {
 	kind    string
 	taskID  int64
 	targets []projectChangeTarget
+	// recipients 只由清除事件填入：项目行已不存在，接收者和项目都是删除前算好的。
+	recipients []models.ProjectChangeRecipient
 }
 
 // ProjectChangeListener 把变更推给所有能读受影响项目的用户。
@@ -88,6 +90,15 @@ func (l *ProjectChangeListener) Handle(msg *message.Message) error {
 	if err != nil {
 		return fmt.Errorf("decode the %s change: %w", l.wsEvent, err)
 	}
+	if len(change.recipients) > 0 {
+		for _, recipient := range change.recipients {
+			hub.PublishForUser(recipient.UserID, "project.changed", projectChangedPayload{
+				ProjectIDs: recipient.ProjectIDs,
+				Kind:       change.kind,
+			})
+		}
+		return nil
+	}
 	if len(change.targets) == 0 {
 		return nil
 	}
@@ -111,19 +122,28 @@ func (l *ProjectChangeListener) Handle(msg *message.Message) error {
 		return nil
 	}
 
-	userIDs, err := models.GetUserIDsWithAccessToProjects(s, projectIDs)
+	access, userIDs, err := models.GetProjectAccessForProjectIDsIncludingTrash(s, projectIDs)
 	if err != nil {
 		return fmt.Errorf("resolve the users with access to projects %v: %w", projectIDs, err)
 	}
 
-	payload := projectChangedPayload{
-		ProjectIDs: projectIDs,
-		TaskID:     change.taskID,
-		Kind:       change.kind,
-	}
 	for _, userID := range userIDs {
+		// 只能读子项目的用户不该收到读不了的父项目 ID，这里按用户过滤。
+		readable := make([]int64, 0, len(projectIDs))
+		for _, projectID := range projectIDs {
+			if access[projectID][userID] {
+				readable = append(readable, projectID)
+			}
+		}
+		if len(readable) == 0 {
+			continue
+		}
 		// 做改动的用户自己也推：他的其他标签页和窗口同样要刷新。
-		hub.PublishForUser(userID, "project.changed", payload)
+		hub.PublishForUser(userID, "project.changed", projectChangedPayload{
+			ProjectIDs: readable,
+			TaskID:     change.taskID,
+			Kind:       change.kind,
+		})
 	}
 
 	return nil
@@ -140,9 +160,50 @@ func projectChangeOf(s *xorm.Session, event string, payload []byte) (projectChan
 		return batchChange(payload)
 	case event == (&models.TaskPositionsRecalculatedEvent{}).Name():
 		return positionsChange(s, payload)
+	case event == (&models.ProjectParentChangedEvent{}).Name():
+		return parentChange(payload)
+	case event == (&models.ProjectChangePurgedEvent{}).Name():
+		return purgedChange(payload)
 	}
 
 	return structureChange(event, payload)
+}
+
+// parentChange 同时带上新旧父项目：新父项目在项目事件里，旧父项目只有这个事件知道。
+func parentChange(payload []byte) (projectChange, error) {
+	change := projectChange{kind: projectChangeStructure}
+
+	var event models.ProjectParentChangedEvent
+	if err := json.Unmarshal(payload, &event); err != nil {
+		return change, err
+	}
+	if event.Project == nil || event.Project.ID <= 0 {
+		return change, nil
+	}
+	change.targets = []projectChangeTarget{{
+		projectID:       event.Project.ID,
+		parentProjectID: event.Project.ParentProjectID,
+	}}
+	if event.OldParentProjectID != nil && *event.OldParentProjectID > 0 {
+		change.targets = append(change.targets, projectChangeTarget{
+			projectID: *event.OldParentProjectID,
+		})
+	}
+
+	return change, nil
+}
+
+// purgedChange 只做解码：项目行已删除，接收者和项目在清除前就写进了事件。
+func purgedChange(payload []byte) (projectChange, error) {
+	change := projectChange{kind: projectChangeStructure}
+
+	var event models.ProjectChangePurgedEvent
+	if err := json.Unmarshal(payload, &event); err != nil {
+		return change, err
+	}
+	change.recipients = event.Recipients
+
+	return change, nil
 }
 
 // taskChange 转成单个任务带来的变更；所有任务事件都把它放在 "task" 字段。
@@ -281,6 +342,8 @@ func projectChangeEventNames() []string {
 		[]string{
 			(&models.TasksBatchCreatedEvent{}).Name(),
 			(&models.TaskPositionsRecalculatedEvent{}).Name(),
+			(&models.ProjectParentChangedEvent{}).Name(),
+			(&models.ProjectChangePurgedEvent{}).Name(),
 		},
 	)
 }

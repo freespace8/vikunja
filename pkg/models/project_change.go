@@ -54,12 +54,62 @@ func GetProjectIDsWithAncestors(s *xorm.Session, projectID int64, knownParentID 
 	return ids, nil
 }
 
-// GetUserIDsWithAccessToProjects 返回至少能读其中一个项目的所有用户，已去重。
-// 已在查找前被删除的项目不贡献用户，而不是让整次调用失败。
-func GetUserIDsWithAccessToProjects(s *xorm.Session, projectIDs []int64) ([]int64, error) {
-	_, userIDs, err := getProjectAccessForProjectIDs(s, projectIDs)
-	if err != nil {
-		return nil, fmt.Errorf("get the users with access to projects %v: %w", projectIDs, err)
+// readProjectIncludingTrash 读到回收站里的项目：删除事件在事务提交后才处理，那时行已经软删除。
+func readProjectIncludingTrash(s *xorm.Session, projectID int64) (*Project, error) {
+	if projectID < 1 {
+		return nil, ErrProjectDoesNotExist{ID: projectID}
 	}
-	return userIDs, nil
+	project, err := getProjectIncludingTrash(s, projectID)
+	if err != nil {
+		return nil, err
+	}
+	if project == nil {
+		return nil, ErrProjectDoesNotExist{ID: projectID}
+	}
+	return project, nil
+}
+
+// GetProjectAccessForProjectIDsIncludingTrash 与 getProjectAccessForProjectIDs 相同，
+// 但能解析回收站里的项目，删除事件的监听器靠它找到接收者。
+func GetProjectAccessForProjectIDsIncludingTrash(s *xorm.Session, projectIDs []int64) (accessByProject map[int64]map[int64]bool, userIDs []int64, err error) {
+	accessByProject, userIDs, err = projectAccessForProjectIDs(s, projectIDs, func(s *xorm.Session, projectID int64) ([]int64, error) {
+		return userIDsWithProjectAccess(s, projectID, nil, readProjectIncludingTrash)
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("get the users with access to projects %v: %w", projectIDs, err)
+	}
+	return accessByProject, userIDs, nil
+}
+
+// ProjectChangeRecipient 是一个接收推送的用户和该用户能读的项目。
+type ProjectChangeRecipient struct {
+	UserID     int64   `json:"user_id"`
+	ProjectIDs []int64 `json:"project_ids"`
+}
+
+// GetProjectChangeRecipients 按用户列出推送时要带的项目。
+// 清除后项目和权限行都已不存在，接收者必须在删除前算好，所以事件自己带上这个结果。
+func GetProjectChangeRecipients(s *xorm.Session, projectIDs []int64) ([]ProjectChangeRecipient, error) {
+	access, userIDs, err := GetProjectAccessForProjectIDsIncludingTrash(s, projectIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	recipients := make([]ProjectChangeRecipient, 0, len(userIDs))
+	for _, userID := range userIDs {
+		readable := make([]int64, 0, len(projectIDs))
+		for _, projectID := range projectIDs {
+			if access[projectID][userID] {
+				readable = append(readable, projectID)
+			}
+		}
+		if len(readable) == 0 {
+			continue
+		}
+		recipients = append(recipients, ProjectChangeRecipient{
+			UserID:     userID,
+			ProjectIDs: readable,
+		})
+	}
+	return recipients, nil
 }

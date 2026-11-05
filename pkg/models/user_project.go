@@ -58,9 +58,14 @@ func getUserIDsWithProjectAccess(s *xorm.Session, projectID int64) (uids []int64
 }
 
 func getUserIDsWithProjectAccessFiltered(s *xorm.Session, projectID int64, teamFilter func(teamID int64) (bool, error)) (uids []int64, err error) {
+	return userIDsWithProjectAccess(s, projectID, teamFilter, GetProjectSimpleByID)
+}
+
+// readProject 决定怎么读权限链上的项目行：回收站里的项目和清除前的事件也要能解析权限链。
+func userIDsWithProjectAccess(s *xorm.Session, projectID int64, teamFilter func(teamID int64) (bool, error), readProject func(*xorm.Session, int64) (*Project, error)) (uids []int64, err error) {
 	userids := []*ProjectUIDs{}
 
-	currentProject, err := GetProjectSimpleByID(s, projectID)
+	currentProject, err := readProject(s, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -108,7 +113,7 @@ func getUserIDsWithProjectAccessFiltered(s *xorm.Session, projectID int64, teamF
 			break
 		}
 
-		parent, err := GetProjectSimpleByID(s, currentProject.parentID())
+		parent, err := readProject(s, currentProject.parentID())
 		if err != nil && !IsErrProjectDoesNotExist(err) {
 			return nil, err
 		}
@@ -175,8 +180,12 @@ func getProjectAccessForTasks(s *xorm.Session, tasks []*Task) (accessByProject m
 	return getProjectAccessForProjectIDs(s, projectIDs)
 }
 
-// getProjectAccessForProjectIDs maps every project to the users who can read it and returns the deduplicated union.
+// getProjectAccessForProjectIDs 返回每个项目能读它的用户，以及所有人去重后的并集。
 func getProjectAccessForProjectIDs(s *xorm.Session, projectIDs []int64) (accessByProject map[int64]map[int64]bool, userIDs []int64, err error) {
+	return projectAccessForProjectIDs(s, projectIDs, getUserIDsWithProjectAccess)
+}
+
+func projectAccessForProjectIDs(s *xorm.Session, projectIDs []int64, getUIDs func(*xorm.Session, int64) ([]int64, error)) (accessByProject map[int64]map[int64]bool, userIDs []int64, err error) {
 	accessByProject = map[int64]map[int64]bool{}
 	seen := map[int64]bool{}
 	for _, projectID := range projectIDs {
@@ -185,7 +194,7 @@ func getProjectAccessForProjectIDs(s *xorm.Session, projectIDs []int64) (accessB
 		}
 		access := map[int64]bool{}
 		accessByProject[projectID] = access
-		uids, err := getUserIDsWithProjectAccess(s, projectID)
+		uids, err := getUIDs(s, projectID)
 		if err != nil {
 			if IsErrProjectDoesNotExist(err) {
 				continue
