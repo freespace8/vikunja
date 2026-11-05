@@ -1,8 +1,9 @@
 import {useMutation} from '@tanstack/vue-query'
-import {bucketsCreate, bucketsUpdate, bucketsDelete, projectViewTasksList, type Bucket} from '@/client/generated'
+import {bucketsCreate, bucketsUpdate, bucketsDelete, type Bucket} from '@/client/generated'
 import {contextMutationOptions} from './contextMutation'
-import {BUCKET_TASK_PARAMS, bucketKeys, kanbanKeys, normalizeBucket, type BoardData} from './kanban'
-import {normalizeTask, type TaskFilterParams} from './tasks'
+import {bucketKeys, kanbanKeys, kanbanMutationKeys, normalizeBucket, type BoardData} from './kanban'
+import {fetchBucketTaskPage, type BucketTaskPageInput} from './bucketTaskPage'
+import {normalizeTask} from './tasks'
 import {invalidateTaskMembership} from './taskCache'
 import {projectKeys} from './projects'
 
@@ -10,8 +11,13 @@ type BucketDraft = Required<Pick<Bucket, 'title'>>
 // The update is a PUT, so a partial body would reset limit and position.
 type BucketUpdate = Required<Pick<Bucket, 'id' | 'title' | 'limit' | 'position'>>
 
+// 看板结构的 mutation 也会写 BoardData，实时刷新据此避让，避免覆盖乐观更新。
+function kanbanMutation<TOptions extends object>(options: TOptions): TOptions & {mutationKey: readonly unknown[]} {
+	return {...options, mutationKey: kanbanMutationKeys.all}
+}
+
 export function createBucketMutationOptions() {
-	return contextMutationOptions({
+	return kanbanMutation(contextMutationOptions({
 		mutationFn: async ({project, view, bucket}: {project: number, view: number, bucket: BucketDraft}) =>
 			(await bucketsCreate({path: {project, view}, body: {title: bucket.title}})).data,
 		onSuccess: (bucket, {project, view}, client) => {
@@ -29,11 +35,11 @@ export function createBucketMutationOptions() {
 			invalidateTaskMembership(client),
 			client.invalidateQueries({queryKey: bucketKeys.list(project, view)}),
 		]),
-	})
+	}))
 }
 
 export function updateBucketMutationOptions(successMessage?: string) {
-	return contextMutationOptions({
+	return kanbanMutation(contextMutationOptions({
 		mutationFn: async ({project, view, bucket}: {project: number, view: number, bucket: BucketUpdate}) =>
 			(await bucketsUpdate({
 				path: {project, view, bucket: bucket.id},
@@ -65,11 +71,11 @@ export function updateBucketMutationOptions(successMessage?: string) {
 			client.invalidateQueries({queryKey: bucketKeys.list(project, view)}),
 		]),
 		successMessage: () => successMessage,
-	})
+	}))
 }
 
 export function deleteBucketMutationOptions(successMessage?: string) {
-	return contextMutationOptions({
+	return kanbanMutation(contextMutationOptions({
 		mutationFn: async ({project, view, bucket}: {project: number, view: number, bucket: number}) => {
 			await bucketsDelete({path: {project, view, bucket}})
 		},
@@ -91,28 +97,12 @@ export function deleteBucketMutationOptions(successMessage?: string) {
 			])
 		},
 		successMessage: () => successMessage,
-	})
+	}))
 }
 
 export function loadBucketPageMutationOptions() {
-	return contextMutationOptions({
-		mutationFn: async ({project, view, params, bucket, page}: {
-			project: number,
-			view: number,
-			params: TaskFilterParams,
-			bucket: number,
-			page: number,
-		}) => (await projectViewTasksList({
-			path: {project, view},
-			query: {
-				...params,
-				...BUCKET_TASK_PARAMS,
-				page,
-				sort_by: ['position'],
-				order_by: ['asc'],
-				filter: `${params.filter ? `(${params.filter}) && ` : ''}bucket_id = ${bucket}`,
-			},
-		})).data,
+	return kanbanMutation(contextMutationOptions({
+		mutationFn: async (input: BucketTaskPageInput) => fetchBucketTaskPage(input),
 		onSuccess: (data, {project, view, params, bucket, page}, client) => client.setQueryData<BoardData>(
 			kanbanKeys.board(project, view, params),
 			current => {
@@ -134,7 +124,7 @@ export function loadBucketPageMutationOptions() {
 				}
 			},
 		),
-	})
+	}))
 }
 
 export function useCreateBucketMutation() {

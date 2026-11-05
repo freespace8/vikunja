@@ -11,6 +11,7 @@ import {
 	QueryClient,
 	QueryObserver,
 	VueQueryPlugin,
+	mutationOptions,
 	type QueryKey,
 } from '@tanstack/vue-query'
 import {
@@ -24,6 +25,7 @@ import {useProjectLiveUpdates} from './useProjectLiveUpdates'
 import {
 	bucketKeys,
 	kanbanKeys,
+	kanbanMutationKeys,
 	type BoardData,
 } from '@/client/queries/kanban'
 import {projectKeys} from '@/client/queries/projects'
@@ -218,6 +220,151 @@ it('counts only the pages it could load, so the next scroll does not skip one', 
 	const board = client.getQueryData<BoardData>(boardKey)!
 	expect(board.pages).toEqual({3: 2})
 	expect(board.buckets[0].tasks.map(task => task.id)).toEqual([1, 2])
+})
+
+it('stops at the first failed page so a later page is requested again', async () => {
+	const boardKey = kanbanKeys.board(1, 4)
+	client.setQueryData<BoardData>(boardKey, boardWith(3, [taskOf(1)], 3))
+	sdk.projectViewBucketsTasksList.mockResolvedValue({
+		data: {
+			items: [
+				{
+					id: 3,
+					count: 30,
+					tasks: [{id: 1}],
+				},
+			],
+		},
+	})
+	// 第二页失败、第三页成功：第三页不能算进来，否则下次滚动会跳过第二页。
+	sdk.projectViewTasksList
+		.mockRejectedValueOnce(new Error('offline'))
+		.mockResolvedValueOnce({data: {items: [{id: 3}]}})
+	observe(boardKey)
+	mountUpdates()
+
+	emit({
+		project_ids: [1],
+		kind: 'layout',
+	})
+	await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS)
+
+	const board = client.getQueryData<BoardData>(boardKey)!
+	expect(board.pages).toEqual({3: 1})
+	expect(board.buckets[0].tasks.map(task => task.id)).toEqual([1])
+})
+
+it('serializes refreshes of one board and keeps the newer response', async () => {
+	const boardKey = kanbanKeys.board(1, 4)
+	client.setQueryData<BoardData>(boardKey, boardWith(3, [taskOf(1)]))
+	const first = Promise.withResolvers<{data: {items: unknown[]}}>()
+	const second = Promise.withResolvers<{data: {items: unknown[]}}>()
+	sdk.projectViewBucketsTasksList
+		.mockReturnValueOnce(first.promise)
+		.mockReturnValueOnce(second.promise)
+	observe(boardKey)
+	mountUpdates()
+
+	emit({
+		project_ids: [1],
+		kind: 'layout',
+	})
+	await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS)
+	expect(sdk.projectViewBucketsTasksList).toHaveBeenCalledTimes(1)
+
+	// 第一次刷新还没回来，再来的请求只能补刷一次，不能并发再发一次请求。
+	emit({
+		project_ids: [1],
+		kind: 'layout',
+	})
+	await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS)
+	expect(sdk.projectViewBucketsTasksList).toHaveBeenCalledTimes(1)
+
+	first.resolve({data: {items: [{id: 3, count: 1, tasks: [{id: 1}]}]}})
+	await flushPromises()
+	expect(sdk.projectViewBucketsTasksList).toHaveBeenCalledTimes(2)
+
+	// 旧响应先写回，补刷的新响应最后写回。
+	second.resolve({data: {items: [{id: 3, count: 1, tasks: [{id: 2}]}]}})
+	await flushPromises()
+	expect(client.getQueryData<BoardData>(boardKey)!.buckets[0].tasks.map(task => task.id))
+		.toEqual([2])
+})
+
+it('does not write a board back while a kanban mutation is running', async () => {
+	const boardKey = kanbanKeys.board(1, 4)
+	client.setQueryData<BoardData>(boardKey, boardWith(3, [taskOf(1)]))
+	sdk.projectViewBucketsTasksList.mockResolvedValue({
+		data: {
+			items: [
+				{
+					id: 3,
+					count: 1,
+					tasks: [{id: 9}],
+				},
+			],
+		},
+	})
+	observe(boardKey)
+	mountUpdates()
+
+	const pending = Promise.withResolvers<void>()
+	const mutation = client.getMutationCache().build(client, mutationOptions({
+		mutationKey: kanbanMutationKeys.all,
+		mutationFn: () => pending.promise,
+	}))
+	const running = mutation.execute()
+	await flushPromises()
+
+	emit({
+		project_ids: [1],
+		kind: 'layout',
+	})
+	await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS)
+	await flushPromises()
+
+	expect(sdk.projectViewBucketsTasksList).toHaveBeenCalledTimes(1)
+	expect(client.getQueryData<BoardData>(boardKey)!.buckets[0].tasks.map(task => task.id))
+		.toEqual([1])
+
+	pending.resolve()
+	await running
+	await flushPromises()
+
+	// mutation 结束后补刷一次，这时才写回。
+	expect(sdk.projectViewBucketsTasksList).toHaveBeenCalledTimes(2)
+	expect(client.getQueryData<BoardData>(boardKey)!.buckets[0].tasks.map(task => task.id))
+		.toEqual([9])
+})
+
+it('keeps a page that was loaded while the refresh was in flight', async () => {
+	const boardKey = kanbanKeys.board(1, 4)
+	client.setQueryData<BoardData>(boardKey, boardWith(3, [taskOf(1)]))
+	const response = Promise.withResolvers<{data: {items: unknown[]}}>()
+	sdk.projectViewBucketsTasksList.mockReturnValueOnce(response.promise)
+	sdk.projectViewTasksList.mockResolvedValue({data: {items: [{id: 5}]}})
+	observe(boardKey)
+	mountUpdates()
+
+	emit({
+		project_ids: [1],
+		kind: 'layout',
+	})
+	await vi.advanceTimersByTimeAsync(FLUSH_DELAY_MS)
+	expect(sdk.projectViewBucketsTasksList).toHaveBeenCalledTimes(1)
+
+	// 刷新还没回来时用户滚出了第二页，写回时不能把 pages 退回 1。
+	client.setQueryData<BoardData>(boardKey, current => current ? {...current, pages: {3: 2}} : current)
+	response.resolve({data: {items: [{id: 3, count: 2, tasks: [{id: 1}]}]}})
+	await flushPromises()
+
+	expect(sdk.projectViewTasksList).toHaveBeenCalledTimes(1)
+	expect(sdk.projectViewTasksList).toHaveBeenCalledWith(expect.objectContaining({
+		query: expect.objectContaining({page: 2}),
+	}))
+	const board = client.getQueryData<BoardData>(boardKey)!
+	expect(board.pages).toEqual({3: 2})
+	expect(board.buckets[0].tasks.map(task => task.id)).toEqual([1, 5])
 })
 
 it('only refreshes the collections holding the task for a content event', async () => {

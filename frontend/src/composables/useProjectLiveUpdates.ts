@@ -81,16 +81,17 @@ export function useProjectLiveUpdates() {
 		taskIDs = new Set()
 		structureChanged = false
 
+		const work: Promise<unknown>[] = []
 		if (projects.size > 0) {
-			await Promise.all([
+			work.push(
 				refreshBoards(client, key => affected(kanbanKeys.projectOf(key), projects)),
 				invalidateLists(projects),
-			])
+			)
 		}
 
 		if (structure) {
 			// 视图和分桶存在项目缓存里，列选择器用的是 bucketKeys。
-			await Promise.all([
+			work.push(
 				client.invalidateQueries({
 					queryKey: projectKeys.all,
 					refetchType: 'active',
@@ -99,12 +100,15 @@ export function useProjectLiveUpdates() {
 					queryKey: bucketKeys.all,
 					refetchType: 'active',
 				}),
-			])
+			)
 		}
 
 		for (const taskID of tasks) {
-			await refreshTaskCollections(taskID)
+			work.push(refreshTaskCollections(taskID))
 		}
+
+		// 一个看板刷新失败不该拖住其余缓存：失败照样抛出，但所有工作都已经在跑。
+		await Promise.all(work)
 	}
 
 	const unsubscribe = socket.subscribe('project.changed', message => {

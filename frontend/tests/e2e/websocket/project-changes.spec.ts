@@ -29,6 +29,7 @@ async function seedProject(taskCount: number) {
 	await BucketFactory.create(1, {
 		id: BUCKET,
 		project_view_id: KANBAN_VIEW,
+		position: 100,
 	})
 	const tasks = await TaskFactory.create(taskCount, {
 		id: (i: number) => i,
@@ -73,74 +74,134 @@ async function renameFirstTask(page: Page, title: string) {
 test('renaming a task in one context updates the board of another', async ({authenticatedPage: page, apiContext, browser}) => {
 	await seedProject(1)
 	const reader = await openReaderContext(browser, apiContext)
-	const subscribed = waitForSubscribed(reader.page)
-	await reader.page.goto(BOARD)
-	await subscribed
-	await expect(reader.page.locator('.kanban .bucket .tasks .task').filter({hasText: 'Task number 1'})).toBeVisible()
+	try {
+		const subscribed = waitForSubscribed(reader.page)
+		await reader.page.goto(BOARD)
+		await subscribed
+		await expect(reader.page.locator('.kanban .bucket .tasks .task').filter({hasText: 'Task number 1'})).toBeVisible()
 
-	await renameFirstTask(page, 'Renamed from elsewhere')
+		await renameFirstTask(page, 'Renamed from elsewhere')
 
-	await expect(reader.page.locator('.kanban .bucket .tasks .task').filter({hasText: 'Renamed from elsewhere'})).toBeVisible()
-	await expect(reader.page.locator('.kanban .bucket .tasks .task').filter({hasText: 'Task number 1'})).toHaveCount(0)
-	await reader.context.close()
+		await expect(reader.page.locator('.kanban .bucket .tasks .task').filter({hasText: 'Renamed from elsewhere'})).toBeVisible()
+		await expect(reader.page.locator('.kanban .bucket .tasks .task').filter({hasText: 'Task number 1'})).toHaveCount(0)
+	} finally {
+		await reader.context.close()
+	}
 })
 
 test('renaming a task in one context updates the list of another', async ({authenticatedPage: page, apiContext, browser}) => {
 	await seedProject(1)
 	const reader = await openReaderContext(browser, apiContext)
-	const subscribed = waitForSubscribed(reader.page)
-	await reader.page.goto(LIST)
-	await subscribed
-	await expect(reader.page.locator('.tasks .task').filter({hasText: 'Task number 1'})).toBeVisible()
+	try {
+		const subscribed = waitForSubscribed(reader.page)
+		await reader.page.goto(LIST)
+		await subscribed
+		await expect(reader.page.locator('.tasks .task').filter({hasText: 'Task number 1'})).toBeVisible()
 
-	await renameFirstTask(page, 'Renamed from elsewhere')
+		await renameFirstTask(page, 'Renamed from elsewhere')
 
-	await expect(reader.page.locator('.tasks .task').filter({hasText: 'Renamed from elsewhere'})).toBeVisible()
-	await expect(reader.page.locator('.tasks .task').filter({hasText: 'Task number 1'})).toHaveCount(0)
-	await reader.context.close()
+		await expect(reader.page.locator('.tasks .task').filter({hasText: 'Renamed from elsewhere'})).toBeVisible()
+		await expect(reader.page.locator('.tasks .task').filter({hasText: 'Task number 1'})).toHaveCount(0)
+	} finally {
+		await reader.context.close()
+	}
 })
 
 test('a column that scrolled to its second page keeps it when another context changes a task', async ({authenticatedPage: page, apiContext, browser}) => {
 	await seedProject(30)
 	const reader = await openReaderContext(browser, apiContext)
-	await reader.page.setViewportSize({
-		width: 1280,
-		height: 500,
-	})
-	const subscribed = waitForSubscribed(reader.page)
-	await reader.page.goto(BOARD)
-	await subscribed
+	try {
+		await reader.page.setViewportSize({
+			width: 1280,
+			height: 500,
+		})
+		const subscribed = waitForSubscribed(reader.page)
+		await reader.page.goto(BOARD)
+		await subscribed
 
-	const cards = reader.page.locator('.kanban .bucket .tasks .task')
-	await expect(cards).toHaveCount(25)
+		const cards = reader.page.locator('.kanban .bucket .tasks .task')
+		await expect(cards).toHaveCount(25)
 
-	await reader.page.locator('.kanban .bucket .tasks').first().evaluate(element => {
-		element.scrollTop = element.scrollHeight
-	})
-	await expect(cards).toHaveCount(30)
+		await reader.page.locator('.kanban .bucket .tasks').first().evaluate(element => {
+			element.scrollTop = element.scrollHeight
+		})
+		await expect(cards).toHaveCount(30)
 
-	await renameFirstTask(page, 'Renamed from elsewhere')
+		await renameFirstTask(page, 'Renamed from elsewhere')
 
-	await expect(reader.page.locator('.kanban .bucket .tasks .task').filter({hasText: 'Renamed from elsewhere'})).toBeVisible()
-	// 以前重新拉取看板只请求第一页，第二页的卡片会被丢掉。
-	await expect(cards).toHaveCount(30)
-	await reader.context.close()
+		await expect(reader.page.locator('.kanban .bucket .tasks .task').filter({hasText: 'Renamed from elsewhere'})).toBeVisible()
+		// 以前重新拉取看板只请求第一页，第二页的卡片会被丢掉。
+		await expect(cards).toHaveCount(30)
+	} finally {
+		await reader.context.close()
+	}
 })
 
 test('creating a bucket in one context adds the column to the board of another', async ({authenticatedPage: page, apiContext, browser}) => {
 	await seedProject(1)
 	const reader = await openReaderContext(browser, apiContext)
-	const subscribed = waitForSubscribed(reader.page)
-	await reader.page.goto(BOARD)
-	await subscribed
-	await expect(reader.page.locator('.kanban .bucket .title').filter({hasText: 'Next up'})).toHaveCount(0)
+	try {
+		const subscribed = waitForSubscribed(reader.page)
+		await reader.page.goto(BOARD)
+		await subscribed
+		await expect(reader.page.locator('.kanban .bucket .title').filter({hasText: 'Next up'})).toHaveCount(0)
 
-	await page.goto(BOARD)
-	await page.locator('.kanban .bucket.new-bucket .button').click()
-	await page.locator('.kanban .bucket.new-bucket input.input').fill('Next up')
-	await page.locator('.kanban .bucket.new-bucket input.input').press('Enter')
-	await expect(page.locator('.kanban .bucket .title').filter({hasText: 'Next up'})).toBeVisible()
+		await page.goto(BOARD)
+		await page.locator('.kanban .bucket.new-bucket .button').click()
+		await page.locator('.kanban .bucket.new-bucket input.input').fill('Next up')
+		await page.locator('.kanban .bucket.new-bucket input.input').press('Enter')
+		await expect(page.locator('.kanban .bucket .title').filter({hasText: 'Next up'})).toBeVisible()
 
-	await expect(reader.page.locator('.kanban .bucket .title').filter({hasText: 'Next up'})).toBeVisible()
-	await reader.context.close()
+		await expect(reader.page.locator('.kanban .bucket .title').filter({hasText: 'Next up'})).toBeVisible()
+	} finally {
+		await reader.context.close()
+	}
+})
+
+test('dragging a card in one context moves it on the board of another', async ({authenticatedPage: page, apiContext, browser}) => {
+	await seedProject(1)
+	await BucketFactory.create(1, {
+		id: 2,
+		project_view_id: KANBAN_VIEW,
+		position: 200,
+	}, false)
+	const reader = await openReaderContext(browser, apiContext)
+	try {
+		const subscribed = waitForSubscribed(reader.page)
+		await reader.page.goto(BOARD)
+		await subscribed
+		await expect(reader.page.locator('.kanban .bucket:nth-child(1) .tasks')).toContainText('Task number 1')
+
+		await page.goto(BOARD)
+		await page.locator('.kanban .bucket .tasks .task').filter({hasText: 'Task number 1'}).dragTo(
+			page.locator('.kanban .bucket:nth-child(2) .tasks'),
+		)
+
+		await expect(reader.page.locator('.kanban .bucket:nth-child(2) .tasks')).toContainText('Task number 1')
+		await expect(reader.page.locator('.kanban .bucket:nth-child(1) .tasks')).not.toContainText('Task number 1')
+	} finally {
+		await reader.context.close()
+	}
+})
+
+test('trashing the project in another context removes it from the sidebar', async ({apiContext, browser, userToken}) => {
+	await seedProject(1)
+	const reader = await openReaderContext(browser, apiContext)
+	try {
+		const subscribed = waitForSubscribed(reader.page)
+		await reader.page.goto(BOARD)
+		await subscribed
+		const sidebarProject = reader.page.locator('li[data-project-id="1"]')
+		await expect(sidebarProject).toBeVisible()
+
+		// 直接共享的读用户也要收到项目进回收站的推送，所以这里用 API 而不是页面删除。
+		const response = await apiContext.delete('/api/v1/projects/1', {
+			headers: {Authorization: `Bearer ${userToken}`},
+		})
+		expect(response.ok()).toBe(true)
+
+		await expect(sidebarProject).toHaveCount(0)
+	} finally {
+		await reader.context.close()
+	}
 })
