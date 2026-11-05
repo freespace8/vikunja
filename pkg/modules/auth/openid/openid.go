@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -96,6 +97,31 @@ func (b *boolish) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// stringList decodes a JSON string array or a single string — some OIDC
+// providers emit a lone group as a plain string. Other shapes decode to an
+// empty list, since the claim is parsed even for providers not requesting it.
+type stringList []string
+
+func (l *stringList) UnmarshalJSON(data []byte) error {
+	var raw any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	var values stringList
+	switch v := raw.(type) {
+	case string:
+		values = stringList{v}
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				values = append(values, s)
+			}
+		}
+	}
+	*l = values
+	return nil
+}
+
 type claims struct {
 	Email              string                   `json:"email"`
 	EmailVerified      boolish                  `json:"email_verified"`
@@ -103,6 +129,7 @@ type claims struct {
 	PreferredUsername  string                   `json:"preferred_username"`
 	Nickname           string                   `json:"nickname"`
 	VikunjaGroups      []map[string]interface{} `json:"vikunja_groups"`
+	Groups             stringList               `json:"groups"`
 	Picture            string                   `json:"picture"`
 	ExtraSettingsLinks map[string]any           `json:"extra_settings_links"`
 }
@@ -279,7 +306,13 @@ func AuthenticateCallback(ctx context.Context, cb *Callback, providerKey string)
 		return nil, nil, err
 	}
 
-	teamData := getTeamDataFromToken(cl.VikunjaGroups, provider)
+	// Gated on the scope because some providers send groups without being asked.
+	var teamData []*models.Team
+	if slices.Contains(strings.Fields(provider.Scope), "groups") {
+		teamData = getTeamDataFromGroupsClaim(cl.Groups)
+	} else {
+		teamData = getTeamDataFromToken(cl.VikunjaGroups, provider)
+	}
 
 	err = models.SyncExternalTeamsForUser(s, u, teamData, idToken.Issuer, provider.Name)
 	if err != nil {
@@ -357,6 +390,22 @@ func getTeamDataFromToken(groups []map[string]interface{}, provider *Provider) (
 	return teamData
 }
 
+// The groups claim only carries names, so the name doubles as the external id.
+func getTeamDataFromGroupsClaim(groups []string) (teamData []*models.Team) {
+	teamData = []*models.Team{}
+	for _, name := range groups {
+		if name == "" {
+			continue
+		}
+		teamData = append(teamData, &models.Team{
+			Name:       name,
+			ExternalID: name,
+		})
+	}
+
+	return teamData
+}
+
 func resetOpenIDAvatar(s *xorm.Session, u *user.User) error {
 	if u.AvatarProvider != "openid" {
 		return nil
@@ -418,6 +467,20 @@ func fallbackSearchUsers(cl *claims, provider *Provider, idToken *oidc.IDToken) 
 	return searches
 }
 
+func logFallbackDeprecation(provider *Provider, u *user.User) {
+	// Bot logins are refused anyway, so the "link the provider" advice doesn't apply.
+	if u.IsBot() {
+		return
+	}
+
+	log.Warningf(
+		"OpenID provider %q matched local user %d via the deprecated emailfallback/usernamefallback option. "+
+			"Both options will be removed in a future release; the user must link the provider from their account settings before then.",
+		provider.Key,
+		u.ID,
+	)
+}
+
 func getOrCreateUser(s *xorm.Session, cl *claims, provider *Provider, idToken *oidc.IDToken) (u *user.User, err error) {
 
 	// set defaults
@@ -450,6 +513,9 @@ func getOrCreateUser(s *xorm.Session, cl *claims, provider *Provider, idToken *o
 				return nil, err
 			}
 			fallbackMatchFound = err == nil || user.IsErrUserStatusError(err)
+			if fallbackMatchFound {
+				logFallbackDeprecation(provider, u)
+			}
 
 			// Same as above: disabled/locked user found via fallback — return early.
 			if fallbackMatchFound && user.IsErrUserStatusError(err) {
@@ -536,6 +602,10 @@ func mergeClaims(cl *claims, cl2 *claims, forceUserInfo bool) error {
 
 	if (forceUserInfo && len(cl2.VikunjaGroups) > 0) || len(cl.VikunjaGroups) == 0 {
 		cl.VikunjaGroups = cl2.VikunjaGroups
+	}
+
+	if (forceUserInfo && len(cl2.Groups) > 0) || len(cl.Groups) == 0 {
+		cl.Groups = cl2.Groups
 	}
 
 	if (forceUserInfo && len(cl2.ExtraSettingsLinks) > 0) || len(cl.ExtraSettingsLinks) == 0 {

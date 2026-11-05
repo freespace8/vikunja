@@ -76,21 +76,28 @@ func insertFromStructureWithFileProvider(str []*models.ProjectWithTasksAndBucket
 	}
 
 	// Failed transactions roll back file rows, not blobs written before commit.
+	// Deferred so a panic can't skip it.
 	createdFiles := &[]int64{}
+	committed := false
+	defer func() {
+		if committed {
+			return
+		}
+		cleanupAndRollback(s, *createdFiles)
+		events.CleanupPending(s)
+	}()
 
 	err = insertFromStructure(s, str, importer, provider, createdFiles)
 	if err != nil {
 		log.Errorf("[creating structure] Error while creating structure: %s", err.Error())
-		cleanupAndRollback(s, *createdFiles)
-		events.CleanupPending(s)
 		return err
 	}
 
 	err = s.Commit()
 	if err != nil {
-		events.CleanupPending(s)
 		return err
 	}
+	committed = true
 
 	events.DispatchPending(context.Background(), s)
 	return nil
@@ -512,6 +519,11 @@ func createProjectWithEverything(s *xorm.Session, project *models.ProjectWithTas
 		return err
 	}
 
+	err = models.CreateTaskRelationsForImport(s, tasksToCreate, user)
+	if err != nil {
+		return err
+	}
+
 	for _, state := range initialTasks {
 		t := state.task
 		t.BucketID = state.bucketID
@@ -522,39 +534,6 @@ func createProjectWithEverything(s *xorm.Session, project *models.ProjectWithTas
 		}
 
 		log.Debugf("[creating structure] Created task %d", t.ID)
-		if len(t.RelatedTasks) > 0 {
-			log.Debugf("[creating structure] Creating %d related task kinds", len(t.RelatedTasks))
-		}
-
-		// Create all relation for each task
-		for kind, tasks := range t.RelatedTasks {
-
-			if len(tasks) > 0 {
-				log.Debugf("[creating structure] Creating %d related tasks for kind %v", len(tasks), kind)
-			}
-
-			for _, rt := range tasks {
-				taskRel := &models.TaskRelation{
-					TaskID:       t.ID,
-					OtherTaskID:  rt.ID,
-					RelationKind: kind,
-				}
-
-				// Add this check to prevent self-relations
-				if taskRel.TaskID == taskRel.OtherTaskID {
-					log.Debugf("[creating structure] Skipping invalid self-relation for task %d", taskRel.TaskID)
-					continue
-				}
-
-				err = taskRel.Create(s, user)
-				if err != nil && !models.IsErrRelationAlreadyExists(err) {
-					return
-				}
-
-				log.Debugf("[creating structure] Created task relation between task %d and %d", t.ID, rt.ID)
-
-			}
-		}
 
 		// Create all attachments for each task
 		if len(t.Attachments) > 0 {
@@ -689,6 +668,9 @@ func createProjectWithEverything(s *xorm.Session, project *models.ProjectWithTas
 		newPositions := []*models.TaskPosition{}
 		positionTaskIDs := make([]int64, 0, len(project.Positions))
 		for _, pos := range project.Positions {
+			if pos == nil {
+				continue
+			}
 			_, hasTask := canonicalByOldID[pos.TaskID]
 			_, hasView := viewsByOldIDs[pos.ProjectViewID]
 			if !hasTask || !hasView {
@@ -716,6 +698,9 @@ func createProjectWithEverything(s *xorm.Session, project *models.ProjectWithTas
 		newTaskBuckets := make([]*models.TaskBucket, 0, len(project.TaskBuckets))
 		bucketTaskIDs := make([]int64, 0, len(project.TaskBuckets))
 		for _, tb := range project.TaskBuckets {
+			if tb == nil {
+				continue
+			}
 			_, hasTask := canonicalByOldID[tb.TaskID]
 			_, hasBucket := bucketsByOldID[tb.BucketID]
 			if !hasTask || !hasBucket {

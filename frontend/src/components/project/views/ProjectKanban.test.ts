@@ -39,16 +39,15 @@ vi.mock('@/composables/useIncludeSubprojects', async () => {
 	aggregate.state = reactive(aggregate.state)
 	return {useIncludeSubprojects: () => computed(() => aggregate.state.value)}
 })
+const project = vi.hoisted(() => ({
+	id: 1,
+	title: 'Test',
+	max_permission: 2,
+	views: [{id: 10, view_kind: 'kanban', bucket_configuration_mode: 'manual'}],
+}))
 vi.mock('@/composables/useCurrentProject', () => ({
 	useCurrentProject: () => ({
-		currentProject: {
-			value: {
-				id: 1,
-				title: 'Test',
-				max_permission: 2,
-				views: [{id: 10, view_kind: 'kanban', bucket_configuration_mode: 'manual'}],
-			},
-		},
+		currentProject: {value: project},
 		isPending: {value: false},
 	}),
 }))
@@ -103,6 +102,7 @@ vi.mock('vue-i18n', async importOriginal => ({
 }))
 
 import ProjectKanban from './ProjectKanban.vue'
+import {projectKeys} from '@/client/queries/projects'
 
 let queryClient: QueryClient
 const mounted: { unmount: () => void }[] = []
@@ -110,6 +110,8 @@ afterEach(() => mounted.splice(0).forEach(wrapper => wrapper.unmount()))
 
 async function mountKanban(stubs: Record<string, unknown> = {}, projectId = 1) {
 	queryClient = new QueryClient()
+	// ProjectView only mounts a board once the project with its views is cached.
+	queryClient.setQueryData(projectKeys.detail(project.id), project)
 	const wrapper = shallowMount(ProjectKanban, {
 		props: {
 			isLoadingProject: false,
@@ -592,7 +594,7 @@ describe('ProjectKanban', () => {
 			const wrapper = await mountKanban(STUBS)
 
 			const header = wrapper.find('.bucket-header .limit')
-			expect(header.text()).toBe('2/2')
+			expect(header.text()).toBe('2/2 project.kanban.bucketLimitReachedShort')
 			expect(header.classes()).toContain('is-max')
 			expect(wrapper.find('.bucket-footer xbutton').attributes('disabled')).toBe('true')
 			const vm = wrapper.vm as unknown as {shouldAcceptDrop: (bucket: unknown) => boolean}

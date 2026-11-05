@@ -12,6 +12,7 @@ import (
 func init() {
 	Symbols["code.vikunja.io/api/pkg/user/user"] = map[string]reflect.Value{
 		// function, constant and variable definitions
+		"AttachBotOwners":                      reflect.ValueOf(user.AttachBotOwners),
 		"AuthTypeUser":                         reflect.ValueOf(user.AuthTypeUser),
 		"CancelDeletion":                       reflect.ValueOf(user.CancelDeletion),
 		"CancelEmailUpdate":                    reflect.ValueOf(user.CancelEmailUpdate),
@@ -20,6 +21,7 @@ func init() {
 		"CheckUserCanAuthenticate":             reflect.ValueOf(user.CheckUserCanAuthenticate),
 		"CheckUserCredentials":                 reflect.ValueOf(user.CheckUserCredentials),
 		"CheckUserPassword":                    reflect.ValueOf(user.CheckUserPassword),
+		"CheckUserPasswordCountingFailures":    reflect.ValueOf(user.CheckUserPasswordCountingFailures),
 		"CleanupOldTokens":                     reflect.ValueOf(user.CleanupOldTokens),
 		"ConfirmDeletion":                      reflect.ValueOf(user.ConfirmDeletion),
 		"ConfirmEmail":                         reflect.ValueOf(user.ConfirmEmail),
@@ -172,6 +174,7 @@ func init() {
 		"AccountDeletedNotification":                        reflect.ValueOf((*user.AccountDeletedNotification)(nil)),
 		"AccountDeletionConfirmNotification":                reflect.ValueOf((*user.AccountDeletionConfirmNotification)(nil)),
 		"AccountDeletionNotification":                       reflect.ValueOf((*user.AccountDeletionNotification)(nil)),
+		"AccountLockedAfterInvalidPasswordNotification":     reflect.ValueOf((*user.AccountLockedAfterInvalidPasswordNotification)(nil)),
 		"AccountLockedEvent":                                reflect.ValueOf((*user.AccountLockedEvent)(nil)),
 		"CreateUserOptions":                                 reflect.ValueOf((*user.CreateUserOptions)(nil)),
 		"CreatedEvent":                                      reflect.ValueOf((*user.CreatedEvent)(nil)),

@@ -259,6 +259,54 @@ func TestTask_Update(t *testing.T) {
 			"project_id":  1,
 		}, false)
 	})
+	t.Run("task moved to a forbidden project after the permission check", func(t *testing.T) {
+		db.LoadAndAssertFixtures(t)
+		s := db.NewSession()
+		defer s.Close()
+
+		task := &Task{ID: 1, Title: "test10000"}
+		can, err := task.CanUpdate(s, u)
+		require.NoError(t, err)
+		require.True(t, can)
+
+		// Project 2 belongs to user 3 and is not shared with user 1.
+		_, err = s.ID(1).Cols("project_id", "index").Update(&Task{ProjectID: 2, Index: 9999})
+		require.NoError(t, err)
+
+		err = task.Update(s, u)
+		require.ErrorIs(t, err, ErrGenericForbidden{})
+		require.NoError(t, s.Commit())
+
+		db.AssertExists(t, "tasks", map[string]interface{}{
+			"id":         1,
+			"title":      "task #1",
+			"project_id": 2,
+		}, false)
+	})
+	t.Run("task moved to a writable project after the permission check", func(t *testing.T) {
+		db.LoadAndAssertFixtures(t)
+		s := db.NewSession()
+		defer s.Close()
+
+		task := &Task{ID: 1, Title: "test10000"}
+		can, err := task.CanUpdate(s, u)
+		require.NoError(t, err)
+		require.True(t, can)
+
+		// User 1 has write access to project 10 through a share.
+		_, err = s.ID(1).Cols("project_id", "index").Update(&Task{ProjectID: 10, Index: 9999})
+		require.NoError(t, err)
+
+		err = task.Update(s, u)
+		require.NoError(t, err)
+		require.NoError(t, s.Commit())
+
+		db.AssertExists(t, "tasks", map[string]interface{}{
+			"id":         1,
+			"title":      "test10000",
+			"project_id": 10,
+		}, false)
+	})
 	t.Run("hex color with leading #", func(t *testing.T) {
 		db.LoadAndAssertFixtures(t)
 		s := db.NewSession()
@@ -794,6 +842,43 @@ func TestTask_Delete(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, has)
 		assert.True(t, project.Updated.After(deletedTask.Created))
+		assert.Equal(t, int64(1), deletedTask.DeletedByID)
+	})
+	t.Run("link share is recorded as deleter", func(t *testing.T) {
+		db.LoadAndAssertFixtures(t)
+		s := db.NewSession()
+		defer s.Close()
+
+		err := (&Task{ID: 13}).Delete(s, &LinkSharing{
+			ID:         2,
+			ProjectID:  2,
+			Permission: PermissionWrite,
+		})
+		require.NoError(t, err)
+		require.NoError(t, s.Commit())
+
+		db.AssertExists(t, "tasks", map[string]interface{}{
+			"id":            13,
+			"deleted_by_id": -2,
+		}, false)
+	})
+	t.Run("stops running timers on the task", func(t *testing.T) {
+		db.LoadAndAssertFixtures(t)
+		s := db.NewSession()
+		defer s.Close()
+
+		err := (&Task{ID: 1}).Delete(s, &user.User{ID: 1})
+		require.NoError(t, err)
+		require.NoError(t, s.Commit())
+
+		// Fixture 4 is user 1's running timer on task 1
+		s2 := db.NewSession()
+		defer s2.Close()
+		entry := &TimeEntry{}
+		has, err := s2.Where("id = ?", 4).Get(entry)
+		require.NoError(t, err)
+		require.True(t, has)
+		assert.NotNil(t, entry.EndTime)
 	})
 }
 
@@ -822,9 +907,17 @@ func TestHardDeleteTask(t *testing.T) {
 	_, err = s.Insert(&Reaction{EntityID: 1, EntityKind: ReactionKindComment, UserID: 1, Value: "👍"})
 	require.NoError(t, err)
 
-	err = hardDeleteTask(s, &Task{ID: 1})
+	err = hardDeleteTask(s, &Task{
+		ID:        1,
+		ProjectID: 1,
+	})
 	require.NoError(t, err)
+	_, err = files.FileStat(&files.File{ID: 1})
+	require.NoError(t, err, "blob must survive until commit")
 	require.NoError(t, s.Commit())
+	events.DispatchPending(t.Context(), s)
+	_, err = files.FileStat(&files.File{ID: 1})
+	require.Error(t, err)
 
 	db.AssertMissing(t, "tasks", map[string]interface{}{"id": 1})
 	for _, table := range []string{
@@ -848,6 +941,35 @@ func TestHardDeleteTask(t *testing.T) {
 	db.AssertMissing(t, "reactions", map[string]interface{}{"entity_id": 1, "entity_kind": ReactionKindComment})
 	// The attachment files are gone too
 	db.AssertMissing(t, "files", map[string]interface{}{"id": 1})
+	db.AssertMissing(t, "time_entries", map[string]interface{}{"task_id": 1})
+	db.AssertExists(t, "time_entries", map[string]interface{}{
+		"id":         1,
+		"task_id":    0,
+		"project_id": 1,
+	}, false)
+	db.AssertExists(t, "time_entries", map[string]interface{}{
+		"id":         4,
+		"task_id":    0,
+		"project_id": 1,
+	}, false)
+}
+
+func TestHardDeleteTask_RollbackKeepsAttachmentBlobs(t *testing.T) {
+	db.LoadAndAssertFixtures(t)
+	files.InitTestFileFixtures(t)
+	s := db.NewSession()
+	defer s.Close()
+
+	require.NoError(t, hardDeleteTask(s, &Task{
+		ID:        1,
+		ProjectID: 1,
+	}))
+	require.NoError(t, s.Rollback())
+	events.CleanupPending(s)
+
+	db.AssertExists(t, "files", map[string]interface{}{"id": 1}, false)
+	_, err := files.FileStat(&files.File{ID: 1})
+	require.NoError(t, err)
 }
 
 func TestUpdateTasksHelper(t *testing.T) {

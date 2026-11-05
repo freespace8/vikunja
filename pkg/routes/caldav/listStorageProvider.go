@@ -35,6 +35,7 @@ import (
 	"code.vikunja.io/api/pkg/web"
 	"github.com/samedi/caldav-go/data"
 	"github.com/samedi/caldav-go/errs"
+	"github.com/samedi/caldav-go/lib"
 	"xorm.io/xorm"
 )
 
@@ -285,7 +286,7 @@ func (vcls *VikunjaCaldavProjectStorage) GetResourcesByList(rpaths []string) (re
 }
 
 // GetResourcesByFilters fetches a project of resources with a filter
-func (vcls *VikunjaCaldavProjectStorage) GetResourcesByFilters(rpath string, _ *data.ResourceFilter) ([]data.Resource, error) {
+func (vcls *VikunjaCaldavProjectStorage) GetResourcesByFilters(rpath string, filter *data.ResourceFilter) ([]data.Resource, error) {
 
 	// If we already have a project saved, that means the user is making a REPORT request to find out if
 	// anything changed, in that case we need to return all tasks.
@@ -300,6 +301,9 @@ func (vcls *VikunjaCaldavProjectStorage) GetResourcesByFilters(rpath string, _ *
 			}
 			r := data.NewResource(taskURL(vcls.project.ID, &vcls.project.Tasks[i].Task), &rr)
 			r.Name = vcls.project.Tasks[i].Title
+			if !matchesTodoFilter(filter, &r) {
+				continue
+			}
 			resources = append(resources, r)
 		}
 		return resources, nil
@@ -315,6 +319,24 @@ func (vcls *VikunjaCaldavProjectStorage) GetResourcesByFilters(rpath string, _ *
 	return []data.Resource{r}, nil
 	// For now, filtering is disabled.
 	// return vcls.GetResources(rpath, false)
+}
+
+// caldav-go only evaluates time-range on VEVENTs, so a VTODO query with one would match
+// nothing. Those keep getting every task, the client narrows them down itself.
+func matchesTodoFilter(filter *data.ResourceFilter, r *data.Resource) bool {
+	if filter == nil || filter.GetTimeRangeFilter() != nil {
+		return true
+	}
+	return filter.Match(todoResource{r})
+}
+
+// caldav-go reports every non-collection resource as a VEVENT.
+type todoResource struct {
+	*data.Resource
+}
+
+func (todoResource) ComponentName() string {
+	return lib.VTODO
 }
 
 // WebDAV requires every Depth: 1 child to live under the collection's own URI.
@@ -601,7 +623,7 @@ func (vcls *VikunjaCaldavProjectStorage) CreateResource(rpath, content string) (
 	}
 
 	// Inbound CalDAV descriptions are markdown; store them as canonical HTML.
-	if err := applyDescriptionFromMarkdown(s, vTask, ""); err != nil {
+	if err := applyDescriptionFromMarkdown(s, vcls.user, vTask, ""); err != nil {
 		log.Errorf("[CALDAV] Failed to convert description in CreateResource: %v", err)
 		_ = s.Rollback()
 		events.CleanupPending(s)
@@ -655,13 +677,13 @@ func (vcls *VikunjaCaldavProjectStorage) CreateResource(rpath, content string) (
 // applyDescriptionFromMarkdown converts a task's inbound CalDAV description
 // (markdown) to canonical HTML, rebuilding @mentions. Unchanged markdown keeps the
 // stored HTML verbatim, so a no-op read-modify-write doesn't churn it or move Updated.
-func applyDescriptionFromMarkdown(s *xorm.Session, vTask *models.Task, storedHTML string) error {
+func applyDescriptionFromMarkdown(s *xorm.Session, viewer *user2.User, vTask *models.Task, storedHTML string) error {
 	if !richtext.Changed(storedHTML, vTask.Description) {
 		vTask.Description = storedHTML
 		return nil
 	}
 
-	htmlDesc, err := richtext.MarkdownToHTMLWithMentions(s, vTask.Description)
+	htmlDesc, err := richtext.MarkdownToHTMLWithMentions(s, viewer, vTask.Description)
 	if err != nil {
 		return err
 	}
@@ -755,7 +777,7 @@ func (vcls *VikunjaCaldavProjectStorage) UpdateResource(rpath, content string) (
 	}
 
 	// Inbound markdown → canonical HTML, kept verbatim when unchanged.
-	if err := applyDescriptionFromMarkdown(s, vTask, stored.Description); err != nil {
+	if err := applyDescriptionFromMarkdown(s, vcls.user, vTask, stored.Description); err != nil {
 		log.Errorf("[CALDAV] Failed to convert description in UpdateResource: %v", err)
 		_ = s.Rollback()
 		events.CleanupPending(s)
@@ -1122,7 +1144,11 @@ func (vlra *VikunjaProjectResourceAdapter) CalculateEtag() string {
 		}
 	}
 
-	return `"` + strconv.FormatInt(vlra.project.ID, 10) + `-` + strconv.FormatInt(latest.Unix(), 10) + `"`
+	etag := strconv.FormatInt(vlra.project.ID, 10) + "-" + strconv.FormatInt(latest.Unix(), 10)
+	if !vlra.project.LastPurgedAt.IsZero() {
+		etag += ";purge=" + strconv.FormatInt(vlra.project.LastPurgedAt.Unix(), 10)
+	}
+	return `"` + etag + `"`
 }
 
 // GetContent returns the content string of a resource (a task in our case)

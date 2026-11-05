@@ -611,7 +611,7 @@ func (ta *TaskAttachment) Delete(s *xorm.Session, a web.Auth) error {
 		return err
 	}
 
-	doer, _ := user.GetFromAuth(a)
+	doer := doerFromAuth(s, a)
 	task, err := GetTaskByIDSimple(s, ta.TaskID)
 	if err != nil {
 		return err

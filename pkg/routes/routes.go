@@ -147,6 +147,7 @@ func NewEcho() *echo.Echo {
 		// is added. Our route setup creates multiple groups with the same prefix
 		// (e.g. rate-limit subgroups of /api/v1), which would panic as duplicates.
 		NoGroupAutoRegister404Routes: true,
+		JSONSerializer:               jsonSerializer{},
 	})
 
 	e.IPExtractor = newIPExtractor(config.ServiceIPExtractionMethod.GetString(), config.ServiceTrustedProxies.GetString())
@@ -241,7 +242,11 @@ func RegisterRoutes(e *echo.Echo) {
 	e.GET("/.well-known/change-password", ChangePasswordRedirect)
 
 	// healthcheck
-	e.GET("/health", HealthcheckHandler)
+	var healthMiddleware []echo.MiddlewareFunc
+	if auth := healthBasicAuth(); auth != nil {
+		healthMiddleware = append(healthMiddleware, auth)
+	}
+	e.GET("/health", HealthcheckHandler, healthMiddleware...)
 
 	setupStaticFrontendFilesHandler(e)
 
@@ -496,6 +501,9 @@ func registerAPIRoutesV2(e *echo.Echo, a *echo.Group, noAuthRateLimit, refreshRa
 	// Must come after rate limiting: the gate does a per-request admin DB read,
 	// so an unauthenticated flood to /api/v2/admin/* would otherwise be unbounded.
 	a.Use(gateV2AdminRoutes())
+	if auth := healthBasicAuth(); auth != nil {
+		a.Use(pathScoped(func(p string) bool { return p == "/api/v2/health" }, auth))
+	}
 
 	api := apiv2.NewAPI(e, a)
 

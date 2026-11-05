@@ -23,6 +23,7 @@ import (
 
 	"code.vikunja.io/api/pkg/config"
 	"code.vikunja.io/api/pkg/db"
+	"code.vikunja.io/api/pkg/events"
 	"code.vikunja.io/api/pkg/models"
 	"code.vikunja.io/api/pkg/modules/background"
 	backgroundHandler "code.vikunja.io/api/pkg/modules/background/handler"
@@ -231,7 +232,7 @@ type backgroundUploadInput struct {
 	// programmatic clients. Huma's MimeTypeValidator rejects the part pre-handler, so the
 	// byte-level image check in PrepareBackground is the real gate.
 	RawBody huma.MultipartFormFiles[struct {
-		Background huma.FormFile `form:"background" contentType:"image/jpeg,image/png,image/gif,image/bmp,image/tiff,image/webp,application/octet-stream" required:"true" doc:"The background image to upload. Must be a decodable raster image (JPEG, PNG, GIF, BMP, TIFF or WebP); it is resized server-side and re-encoded as JPEG."`
+		Background huma.FormFile `form:"background" contentType:"image/jpeg,image/png,image/gif,image/bmp,image/webp,application/octet-stream" required:"true" doc:"The background image to upload. Must be a decodable raster image (JPEG, PNG, GIF, BMP or WebP); it is resized server-side and re-encoded as JPEG."`
 	}]
 }
 
@@ -404,29 +405,26 @@ func backgroundRemove(ctx context.Context, in *struct {
 
 	s := db.NewSession()
 	defer s.Close()
+	defer events.CleanupPending(s)
 
-	project := &models.Project{ID: in.ProjectID}
-	can, err := project.CanWrite(s, a)
+	project, err := writableProjectForBackground(s, a, in.ProjectID)
 	if err != nil {
 		_ = s.Rollback()
-		return nil, translateDomainError(err)
-	}
-	if !can {
-		_ = s.Rollback()
-		return nil, huma.Error403Forbidden("forbidden")
+		return nil, err
 	}
 
-	if err := project.DeleteBackgroundFileIfExists(s); err != nil {
+	if err := project.RemoveBackground(s); err != nil {
 		_ = s.Rollback()
 		return nil, translateDomainError(err)
 	}
-	if err := models.ClearProjectBackground(s, project.ID); err != nil {
+	if err := project.ReadOne(s, a); err != nil {
 		_ = s.Rollback()
 		return nil, translateDomainError(err)
 	}
 	if err := s.Commit(); err != nil {
 		return nil, translateDomainError(err)
 	}
+	events.DispatchPending(ctx, s)
 
 	return &singleBody[models.Project]{Body: project}, nil
 }
