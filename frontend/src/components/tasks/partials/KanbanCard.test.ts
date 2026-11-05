@@ -132,6 +132,15 @@ describe('KanbanCard', () => {
 		expect(wrapper.find('.kanban-card__project').exists()).toBe(false)
 	})
 
+	it('shows how long ago the task was last updated in the footer', () => {
+		const updated = new Date(Date.now() - 5 * 60_000).toISOString()
+		const wrapper = mountCard(normalizeTask({id: 10, project_id: 1, title: 'Updated task', updated}))
+
+		const time = wrapper.get('.footer .kanban-card__updated')
+		expect(time.text()).toBe('5 minutes ago')
+		expect(time.attributes('datetime')).toBe(updated)
+	})
+
 	// The ctrl click itself is covered by e2e project-view-kanban.spec.ts, which reads the task back from the API.
 	it('announces a completed recurring task to the board', async () => {
 		sdk.patchTasksRead.mockResolvedValue({data: {...recurringTask, done: true}})

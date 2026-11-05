@@ -123,6 +123,13 @@
 					:task="task"
 					class="checklist"
 				/>
+				<time
+					v-tooltip="$t('task.detail.updated', [formatDateLong(task.updated)])"
+					:datetime="formatISO(task.updated)"
+					class="kanban-card__updated"
+				>
+					{{ formatDateSince(task.updated) }}
+				</time>
 			</div>
 		</div>
 	</div>
@@ -149,7 +156,7 @@ import {canPreviewImage} from '@/helpers/attachmentPreview'
 import {fetchAttachmentUrl, releaseAttachmentUrl} from '@/helpers/attachments'
 import {ApiError} from '@/client/problem'
 
-import {formatDateLong, formatDisplayDate, formatISO} from '@/helpers/time/formatDate'
+import {formatDateLong, formatDateSince, formatDisplayDate, formatISO} from '@/helpers/time/formatDate'
 import {colorIsDark} from '@/helpers/color/colorIsDark'
 import {useUpdateTaskMutation} from '@/client/queries/taskMutations'
 import AssigneeList from '@/components/tasks/partials/AssigneeList.vue'
@@ -417,6 +424,13 @@ $task-background: var(--white);
 		flex-shrink: 0;
 	}
 
+	.kanban-card__updated {
+		margin-inline-start: auto;
+		font-size: .75rem;
+		color: var(--grey-500);
+		white-space: nowrap;
+	}
+
 	.kanban-card__top-end {
 		display: flex;
 		align-items: flex-start;
@@ -448,7 +462,7 @@ $task-background: var(--white);
 		}
 
 		// beat component-level color: var(--grey-500) so secondary text tracks the guaranteed main text color
-		.task-id, .kanban-card__project {
+		.task-id, .kanban-card__project, .kanban-card__updated {
 			color: inherit;
 		}
 
@@ -474,7 +488,7 @@ $task-background: var(--white);
 		}
 
 		// beat component-level color: var(--grey-500) so secondary text tracks the guaranteed main text color
-		.task-id, .kanban-card__project {
+		.task-id, .kanban-card__project, .kanban-card__updated {
 			color: inherit;
 		}
 
